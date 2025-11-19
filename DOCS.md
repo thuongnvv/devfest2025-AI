@@ -1,4 +1,4 @@
-# 🔬 DermNet AI - Frontend Integration Guide
+# 🔬 DermNet AI 
 
 Simple API for AI-powered skin disease detection.
 
@@ -276,3 +276,113 @@ async function predictSkinDisease(file) {
 ```
 
 That's it! Simple integration for any frontend framework. 🎉
+
+---
+
+## 🧪 Test API Directly
+
+### Using cURL
+
+#### 1. Health Check
+```bash
+curl https://unbenefited-lura-animatingly.ngrok-free.dev/
+```
+
+#### 2. Get Classes
+```bash
+curl https://unbenefited-lura-animatingly.ngrok-free.dev/classes
+```
+
+#### 3. Upload Image
+```bash
+curl -X POST \
+  -F "image=@path/to/your/image.jpg" \
+  https://unbenefited-lura-animatingly.ngrok-free.dev/predict
+```
+
+#### 4. Base64 Image
+```bash
+# First encode image to base64
+IMAGE_BASE64=$(base64 -w 0 path/to/your/image.jpg)
+
+# Then send
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d "{\"image\": \"$IMAGE_BASE64\"}" \
+  https://unbenefited-lura-animatingly.ngrok-free.dev/predict_base64
+```
+
+### Using Python Requests
+
+```python
+import requests
+import base64
+
+API_URL = "https://unbenefited-lura-animatingly.ngrok-free.dev"
+
+# 1. Health Check
+response = requests.get(f"{API_URL}/")
+print("Health:", response.json())
+
+# 2. Get Classes  
+response = requests.get(f"{API_URL}/classes")
+print("Classes:", response.json())
+
+# 3. Upload Image
+with open('path/to/your/image.jpg', 'rb') as f:
+    files = {'image': f}
+    response = requests.post(f"{API_URL}/predict", files=files)
+    result = response.json()
+    
+    if result['status'] == 'success':
+        print("Top 3 Predictions:")
+        for pred in result['predictions']:
+            print(f"  {pred['rank']}. {pred['class']} - {pred['confidence_percent']:.1f}%")
+    else:
+        print("Out of domain:", result['message'])
+
+# 4. Base64 Image
+with open('path/to/your/image.jpg', 'rb') as f:
+    image_data = base64.b64encode(f.read()).decode('utf-8')
+
+payload = {"image": image_data}
+response = requests.post(f"{API_URL}/predict_base64", json=payload)
+print("Base64 result:", response.json())
+```
+
+### Using JavaScript (Browser Console)
+
+```javascript
+// 1. Health Check
+fetch('https://unbenefited-lura-animatingly.ngrok-free.dev/')
+  .then(res => res.json())
+  .then(data => console.log('Health:', data));
+
+// 2. Get Classes
+fetch('https://unbenefited-lura-animatingly.ngrok-free.dev/classes')
+  .then(res => res.json()) 
+  .then(data => console.log('Classes:', data.classes));
+
+// 3. Upload from file input (assuming you have <input type="file" id="imageInput">)
+const fileInput = document.getElementById('imageInput');
+if (fileInput.files[0]) {
+  const formData = new FormData();
+  formData.append('image', fileInput.files[0]);
+  
+  fetch('https://unbenefited-lura-animatingly.ngrok-free.dev/predict', {
+    method: 'POST',
+    body: formData
+  })
+  .then(res => res.json())
+  .then(result => {
+    if (result.status === 'success') {
+      console.log('Top 3 Predictions:');
+      result.predictions.forEach(pred => 
+        console.log(`${pred.rank}. ${pred.class} - ${pred.confidence_percent.toFixed(1)}%`)
+      );
+    } else {
+      console.log('Out of domain:', result.message);
+    }
+  });
+}
+```
