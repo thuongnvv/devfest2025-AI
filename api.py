@@ -97,7 +97,7 @@ image_transforms = transforms.Compose([
 
 class CBAM(nn.Module):
     """CBAM Attention Module for DermNet"""
-    def __init__(self, channels: int, reduction: int = 16, spatial_kernel: int = 7):
+    def __init__(self, channels: int, reduction: int = 16, spatial_kernel: int = 3):
         super().__init__()
         # Channel attention
         self.mlp = nn.Sequential(
