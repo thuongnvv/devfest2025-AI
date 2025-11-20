@@ -1,10 +1,10 @@
-<<<<<<< HEAD
 ---
 title: Multi-Model Healthcare AI
 emoji: 🏥
 colorFrom: blue
 colorTo: green
 sdk: docker
+app_file: app.py
 pinned: false
 license: mit
 ---
@@ -71,16 +71,3 @@ This AI system is for **educational and research purposes only**. It should not 
 - **Source Code**: Available on [GitHub](https://github.com/thuongnvv/devfest2025-AI)
 
 *Created for DevFest 2025 AI Challenge*
-=======
----
-title: Medagen Docker
-emoji: 🐠
-colorFrom: blue
-colorTo: pink
-sdk: docker
-pinned: false
-license: other
----
-
-Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
->>>>>>> hf/main
