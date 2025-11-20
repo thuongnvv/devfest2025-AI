@@ -201,18 +201,28 @@ def load_model(model_name: str):
         # Load checkpoint
         checkpoint = torch.load(model_path, map_location=DEVICE)
         
-        # Handle different checkpoint formats
+        # Handle different checkpoint formats with better error handling
         if isinstance(checkpoint, dict):
             if 'model_state' in checkpoint:
-                model.load_state_dict(checkpoint['model_state'])
+                try:
+                    model.load_state_dict(checkpoint['model_state'], strict=True)
+                    logger.info(f"✅ Loaded {model_name} with strict=True")
+                except RuntimeError as e:
+                    logger.warning(f"⚠️ Strict loading failed for {model_name}, trying non-strict...")
+                    missing, unexpected = model.load_state_dict(checkpoint['model_state'], strict=False)
+                    if missing:
+                        logger.warning(f"⚠️ Missing keys: {missing[:3]}...")
+                    if unexpected:
+                        logger.warning(f"⚠️ Unexpected keys: {unexpected[:3]}...")
+                    logger.info(f"✅ Loaded {model_name} with strict=False")
             elif 'state_dict' in checkpoint:
-                model.load_state_dict(checkpoint['state_dict'])
+                model.load_state_dict(checkpoint['state_dict'], strict=False)
             elif 'model_state_dict' in checkpoint:
-                model.load_state_dict(checkpoint['model_state_dict'])
+                model.load_state_dict(checkpoint['model_state_dict'], strict=False)
             else:
-                model.load_state_dict(checkpoint)
+                model.load_state_dict(checkpoint, strict=False)
         else:
-            model.load_state_dict(checkpoint)
+            model.load_state_dict(checkpoint, strict=False)
         
         model = model.to(DEVICE)
         model.eval()
