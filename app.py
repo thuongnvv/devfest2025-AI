@@ -84,38 +84,35 @@ transforms_inference = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
-# CBAM Attention Module (exact implementation from API)
+# CBAM Module (EXACT từ training)
 class CBAM(nn.Module):
-    def __init__(self, channels, reduction=16, spatial_kernel=3):
-        super(CBAM, self).__init__()
-        # Channel Attention
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.max_pool = nn.AdaptiveMaxPool2d(1)
-        self.channel_mlp = nn.Sequential(
-            nn.Conv2d(channels, channels // reduction, 1, bias=False),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(channels // reduction, channels, 1, bias=False)
-        )
-        self.sigmoid = nn.Sigmoid()
-        
-        # Spatial Attention  
-        self.spatial_conv = nn.Conv2d(2, 1, kernel_size=spatial_kernel, 
-                                     padding=spatial_kernel//2, bias=False)
-    
-    def forward(self, x):
+    def __init__(self, channels: int, reduction: int = 16, spatial_kernel: int = 7):
+        super().__init__()
         # Channel attention
-        avg_out = self.channel_mlp(self.avg_pool(x))
-        max_out = self.channel_mlp(self.max_pool(x))
-        channel_out = self.sigmoid(avg_out + max_out)
-        x = x * channel_out
-        
+        self.mlp = nn.Sequential(
+            nn.Linear(channels, channels // reduction, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(channels // reduction, channels, bias=False),
+        )
         # Spatial attention
-        avg_out = torch.mean(x, dim=1, keepdim=True)
-        max_out, _ = torch.max(x, dim=1, keepdim=True)
-        spatial_out = torch.cat([avg_out, max_out], dim=1)
-        spatial_out = self.sigmoid(self.spatial_conv(spatial_out))
-        x = x * spatial_out
-        
+        self.spatial = nn.Conv2d(2, 1, kernel_size=spatial_kernel,
+                                 padding=spatial_kernel // 2, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        b, c, h, w = x.size()
+
+        # ----- Channel attention -----
+        avg_pool = F.adaptive_avg_pool2d(x, 1).view(b, c)
+        max_pool = F.adaptive_max_pool2d(x, 1).view(b, c)
+        ch_att = torch.sigmoid(self.mlp(avg_pool) + self.mlp(max_pool)).view(b, c, 1, 1)
+        x = x * ch_att
+
+        # ----- Spatial attention -----
+        avg = torch.mean(x, dim=1, keepdim=True)
+        mx, _ = torch.max(x, dim=1, keepdim=True)
+        s = torch.cat([avg, mx], dim=1)   # [B, 2, H, W]
+        sp_att = torch.sigmoid(self.spatial(s))
+        x = x * sp_att
         return x
 
 # ResNet18_ViTS_CBAM Model (EXACT from training notebook)
