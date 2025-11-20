@@ -1,213 +1,421 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+import gradio as gr
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision import transforms, models
+from torchvision import transforms
 from PIL import Image
 import timm
-import os
-import base64
 import io
-from pyngrok import ngrok
+import json
 
-app = Flask(__name__)
-CORS(app)
-
-# ============= CONFIG =============
+# Device configuration
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-MODEL_PATH = "best_medagen_resnet18_vits_cbam.pth"
 IMAGE_SIZE = 224
-CONFIDENCE_THRESHOLD = 0.40
-NGROK_TOKEN = "35W4RdCdRA10R0NSBN6Vzxyr379_2vceBj14fqSEMKQHRDe4B"
 
-# ============= CBAM MODULE =============
-class CBAM(nn.Module):
-    def __init__(self, channels: int, reduction: int = 16, spatial_kernel: int = 7):
-        super().__init__()
-        self.mlp = nn.Sequential(
-            nn.Linear(channels, channels // reduction, bias=False),
-            nn.ReLU(inplace=True),
-            nn.Linear(channels // reduction, channels, bias=False),
-        )
-        self.spatial = nn.Conv2d(2, 1, kernel_size=spatial_kernel,
-                                 padding=spatial_kernel // 2, bias=False)
+# Model-specific confidence thresholds (from verified API)
+CONFIDENCE_THRESHOLDS = {
+    "dermnet": 0.40,  # 40% threshold for skin diseases
+    "teeth": 0.60,    # 60% threshold for teeth  
+    "nail": 0.70      # 70% threshold for nails
+}
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        b, c, h, w = x.size()
-        avg_pool = F.adaptive_avg_pool2d(x, 1).view(b, c)
-        max_pool = F.adaptive_max_pool2d(x, 1).view(b, c)
-        ch_att = torch.sigmoid(self.mlp(avg_pool) + self.mlp(max_pool)).view(b, c, 1, 1)
-        x = x * ch_att
+# Updated model configurations (exact paths from API)
+MODEL_CONFIGS = {
+    "dermnet": {
+        "path": "best_medagen_resnet18_vits_cbam.pth",
+        "description": "Skin disease detection using ResNet18 + ViT + CBAM",
+        "architecture": "ResNet18 + Vision Transformer + CBAM Attention",
+        "type": "fusion_model",
+        "classes": [
+            "Acne and Rosacea Photos",
+            "Actinic Keratosis Basal Cell Carcinoma and other Malignant Lesions", 
+            "Atopic Dermatitis Photos",
+            "Cellulitis Impetigo and other Bacterial Infections",
+            "Eczema Photos",
+            "Hair Loss Photos Alopecia and other Hair Diseases",
+            "Melanoma Skin Cancer Nevi and Moles",
+            "Nail Fungus and other Nail Disease",
+            "Poison Ivy Photos and other Contact Dermatitis",
+            "Psoriasis pictures Lichen Planus and related diseases",
+            "Scabies Lyme Disease and other Infestations and Bites", 
+            "Seborrheic Keratoses and other Benign Tumors",
+            "Tinea Ringworm Candidiasis and other Fungal Infections",
+            "Warts Molluscum and other Viral Infections"
+        ]
+    },
+    "teeth": {
+        "path": "best_teeth_model.pth",
+        "description": "Teeth disease detection using MobileNetV2",
+        "architecture": "MobileNetV2",
+        "type": "mobilenet",
+        "classes": [
+            "Calculus",
+            "Mouth Ulcer",
+            "Tooth Discoloration", 
+            "caries",
+            "hypodontia"
+        ]
+    },
+    "nail": {
+        "path": "best_nail_model.pth", 
+        "description": "Nail disease detection using MobileNetV2",
+        "architecture": "MobileNetV2",
+        "type": "mobilenet",
+        "classes": [
+            "Acral_Lentiginous_Melanoma",
+            "Healthy_Nail",
+            "Onychogryphosis",
+            "blue_finger",
+            "clubbing",
+            "pitting"
+        ]
+    }
+}
 
-        avg = torch.mean(x, dim=1, keepdim=True)
-        mx, _ = torch.max(x, dim=1, keepdim=True)
-        s = torch.cat([avg, mx], dim=1)
-        sp_att = torch.sigmoid(self.spatial(s))
-        x = x * sp_att
-        return x
 
-# ============= FUSION MODEL =============
-class ResNet18_ViTS_CBAM(nn.Module):
-    def __init__(self, num_classes: int):
-        super().__init__()
-        rn = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
-        self.resnet_backbone = nn.Sequential(*list(rn.children())[:-1])
-        res_dim = 512
 
-        self.vit = timm.create_model("vit_small_patch16_224", pretrained=True)
-        vit_dim = self.vit.embed_dim
-        if hasattr(self.vit, "head"):
-            self.vit.reset_classifier(0)
+# Global variable to store loaded models
+loaded_models = {}
 
-        fused_dim = res_dim + vit_dim
-        self.cbam = CBAM(fused_dim, reduction=16, spatial_kernel=3)
-        self.classifier = nn.Sequential(
-            nn.Linear(fused_dim, 512),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.3),
-            nn.Linear(512, num_classes),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        r = self.resnet_backbone(x)
-        r = r.view(r.size(0), -1)
-        v = self.vit(x)
-        feat = torch.cat([r, v], dim=1)
-        feat_4d = feat.unsqueeze(-1).unsqueeze(-1)
-        feat_4d = self.cbam(feat_4d)
-        feat = feat_4d.view(feat_4d.size(0), -1)
-        out = self.classifier(feat)
-        return out
-
-# ============= LOAD MODEL =============
-def load_model():
-    checkpoint = torch.load(MODEL_PATH, map_location=DEVICE)
-    classes = checkpoint["classes"]
-    model = ResNet18_ViTS_CBAM(num_classes=len(classes))
-    model.load_state_dict(checkpoint["model_state"])
-    model = model.to(DEVICE)
-    model.eval()
-    return model, classes
-
-# ============= TRANSFORMS =============
+# Image transformations
 transforms_inference = transforms.Compose([
     transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
     transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
-# ============= PREDICTION FUNCTION =============
-def predict_from_image(image, model, class_names, confidence_threshold=0.40):
-    image_tensor = transforms_inference(image).unsqueeze(0).to(DEVICE)
+# CBAM Attention Module (exact implementation from API)
+class CBAM(nn.Module):
+    def __init__(self, channels, reduction=16, spatial_kernel=3):
+        super(CBAM, self).__init__()
+        # Channel Attention
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.max_pool = nn.AdaptiveMaxPool2d(1)
+        self.channel_mlp = nn.Sequential(
+            nn.Conv2d(channels, channels // reduction, 1, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels // reduction, channels, 1, bias=False)
+        )
+        self.sigmoid = nn.Sigmoid()
+        
+        # Spatial Attention  
+        self.spatial_conv = nn.Conv2d(2, 1, kernel_size=spatial_kernel, 
+                                     padding=spatial_kernel//2, bias=False)
     
-    with torch.no_grad():
-        logits = model(image_tensor)
-        probabilities = torch.softmax(logits, dim=1)[0]
-        max_prob, max_idx = torch.max(probabilities, dim=0)
-        max_confidence = float(max_prob)
+    def forward(self, x):
+        # Channel attention
+        avg_out = self.channel_mlp(self.avg_pool(x))
+        max_out = self.channel_mlp(self.max_pool(x))
+        channel_out = self.sigmoid(avg_out + max_out)
+        x = x * channel_out
         
-        if max_confidence < confidence_threshold:
-            return {
-                "status": "out_of_domain",
-                "message": f"Out of domain (confidence: {max_confidence*100:.2f}% < {confidence_threshold*100:.0f}%)",
-                "max_confidence": max_confidence,
-                "threshold": confidence_threshold
-            }
+        # Spatial attention
+        avg_out = torch.mean(x, dim=1, keepdim=True)
+        max_out, _ = torch.max(x, dim=1, keepdim=True)
+        spatial_out = torch.cat([avg_out, max_out], dim=1)
+        spatial_out = self.sigmoid(self.spatial_conv(spatial_out))
+        x = x * spatial_out
         
-        top3 = torch.topk(probabilities, k=min(3, len(class_names)))
-        predictions = []
-        for i in range(top3.indices.size(0)):
-            idx = top3.indices[i].item()
-            prob = float(top3.values[i])
-            predictions.append({
-                "rank": i + 1,
-                "class": class_names[idx],
-                "confidence": prob,
-                "confidence_percent": prob * 100
-            })
-        
-        return {
-            "status": "success",
-            "predictions": predictions,
-            "max_confidence": max_confidence,
-            "threshold": confidence_threshold
-        }
+        return x
 
-# ============= FLASK ROUTES =============
-@app.route('/', methods=['GET'])
-def health_check():
-    return jsonify({
-        "status": "healthy",
-        "message": "DermNet AI API is running",
-        "model_loaded": model is not None,
-        "device": DEVICE,
-        "confidence_threshold": CONFIDENCE_THRESHOLD
-    })
+# ResNet18_ViTS_CBAM Model (exact implementation from API)
+class ResNet18_ViTS_CBAM(nn.Module):
+    def __init__(self, num_classes=14):
+        super(ResNet18_ViTS_CBAM, self).__init__()
+        # ResNet18 backbone
+        self.resnet = timm.create_model('resnet18', pretrained=False, num_classes=0)
+        
+        # Vision Transformer
+        self.vit = timm.create_model('vit_small_patch16_224', pretrained=False, num_classes=0)
+        
+        # CBAM attention with spatial_kernel=3 (from training code)
+        self.cbam = CBAM(512, reduction=16, spatial_kernel=3)
+        
+        # Classifier combining ResNet and ViT features
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.5),
+            nn.Linear(512 + 384, num_classes)  # ResNet: 512, ViT: 384
+        )
+    
+    def forward(self, x):
+        # ResNet features with CBAM attention
+        resnet_features = self.resnet.forward_features(x)
+        resnet_features = self.cbam(resnet_features)
+        resnet_features = nn.AdaptiveAvgPool2d(1)(resnet_features)
+        resnet_features = torch.flatten(resnet_features, 1)
+        
+        # ViT features
+        vit_features = self.vit.forward_features(x)
+        vit_features = vit_features[:, 0]  # CLS token
+        
+        # Combine features
+        combined_features = torch.cat([resnet_features, vit_features], dim=1)
+        output = self.classifier(combined_features)
+        return output
 
-@app.route('/predict', methods=['POST'])
-def predict():
+def load_model(model_name):
+    """Load a specific model"""
+    if model_name in loaded_models:
+        return loaded_models[model_name]
+    
+    config = MODEL_CONFIGS[model_name]
+    model_path = config["path"]
+    
     try:
-        # Check if image is provided
-        if 'image' not in request.files:
-            return jsonify({"error": "No image provided"}), 400
+        # Load state dict first to inspect structure
+        checkpoint = torch.load(model_path, map_location=DEVICE)
         
-        file = request.files['image']
-        if file.filename == '':
-            return jsonify({"error": "No image selected"}), 400
+        # Handle different checkpoint formats
+        if isinstance(checkpoint, dict):
+            if 'model_state' in checkpoint:
+                # Checkpoint with wrapper
+                state_dict = checkpoint['model_state']
+                print(f"📦 Found model_state in checkpoint for {model_name}")
+            elif 'state_dict' in checkpoint:
+                # Standard checkpoint format
+                state_dict = checkpoint['state_dict']
+                print(f"📦 Found state_dict in checkpoint for {model_name}")
+            else:
+                # Direct state dict
+                state_dict = checkpoint
+                print(f"📦 Using direct state_dict for {model_name}")
+        else:
+            # Old format - direct model
+            state_dict = checkpoint
+            print(f"📦 Using legacy format for {model_name}")
         
-        # Load and process image
-        image = Image.open(file.stream).convert('RGB')
+        # Create model based on type (exact API implementation)
+        if config["type"] == "fusion_model":
+            # DermNet model - exact architecture
+            model = ResNet18_ViTS_CBAM(num_classes=len(config["classes"]))
+        else:
+            # MobileNetV2 for teeth and nail models
+            from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
+            model = mobilenet_v2(weights=MobileNet_V2_Weights.DEFAULT)
+            model.classifier[1] = nn.Linear(model.last_channel, len(config["classes"]))
+            print(f"🔧 Created MobileNetV2 for {model_name}")
+        
+        # Try to load state dict with different strategies
+        try:
+            model.load_state_dict(state_dict, strict=True)
+            print(f"✅ Loaded {model_name} with strict=True")
+        except RuntimeError as e:
+            print(f"⚠️ Strict loading failed for {model_name}, trying non-strict...")
+            try:
+                missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+                if missing_keys:
+                    print(f"⚠️ Missing keys: {missing_keys[:3]}...")
+                if unexpected_keys:
+                    print(f"⚠️ Unexpected keys: {unexpected_keys[:3]}...")
+                print(f"✅ Loaded {model_name} with strict=False")
+            except Exception as e2:
+                print(f"❌ Failed to load {model_name}: {str(e2)}")
+                return None
+        
+        model = model.to(DEVICE)
+        model.eval()
+        
+        loaded_models[model_name] = model
+        print(f"✅ Successfully loaded and cached {model_name} model")
+        return model
+        
+    except Exception as e:
+        print(f"❌ Error loading {model_name} model: {str(e)}")
+        return None
+
+def predict_image(image, model_name, top_n):
+    """Predict using uploaded image"""
+    if image is None:
+        return "❌ **Error:** Please upload an image first."
+    
+    try:
+        # Load model if not already loaded
+        model = load_model(model_name)
+        if model is None:
+            return f"❌ **Error:** Failed to load {model_name} model."
+        
+        # Get model config
+        config = MODEL_CONFIGS[model_name]
+        class_names = config["classes"]
+        
+        # Preprocess image
+        if isinstance(image, str):
+            image = Image.open(image).convert('RGB')
+        else:
+            image = image.convert('RGB')
+            
+        image_tensor = transforms_inference(image).unsqueeze(0).to(DEVICE)
         
         # Make prediction
-        result = predict_from_image(image, model, class_names, CONFIDENCE_THRESHOLD)
-        
-        return jsonify(result)
-    
+        with torch.no_grad():
+            logits = model(image_tensor)
+            probabilities = torch.softmax(logits, dim=1)[0]
+            max_prob, max_idx = torch.max(probabilities, dim=0)
+            max_confidence = float(max_prob)
+            
+            # Calculate entropy for uncertainty detection
+            entropy = -torch.sum(probabilities * torch.log(probabilities + 1e-8))
+            normalized_entropy = float(entropy / torch.log(torch.tensor(len(class_names))))
+            
+            # Apply model-specific confidence threshold
+            threshold = CONFIDENCE_THRESHOLDS.get(model_name, 0.50)
+            
+            # Out-of-domain detection
+            is_out_of_domain = (max_confidence < threshold) or (normalized_entropy > 0.8)
+            
+            if is_out_of_domain:
+                reasons = []
+                if max_confidence < threshold:
+                    reasons.append(f"low confidence ({max_confidence*100:.1f}% < {threshold*100:.0f}%)")
+                if normalized_entropy > 0.8:
+                    reasons.append(f"high uncertainty (entropy: {normalized_entropy:.3f})")
+                
+                output = f"🚫 **Out of Domain**\n\n"
+                output += f"**Reason:** {' and '.join(reasons)}\n"
+                output += f"**Confidence:** {max_confidence*100:.1f}%\n"
+                output += f"**Threshold:** {threshold*100:.0f}%\n\n"
+                output += f"**Suggestion:** This image may not contain {config['description'].lower()}. Please try uploading a relevant medical image."
+                return output
+            
+            # Get top N predictions
+            top_n = min(top_n, len(class_names))
+            topk = torch.topk(probabilities, k=top_n)
+            
+            # Format successful prediction
+            output = f"✅ **Prediction Successful**\n\n"
+            output += f"**Model:** {config['description']}\n"
+            output += f"**Max Confidence:** {max_confidence*100:.1f}%\n"
+            output += f"**Entropy:** {normalized_entropy:.3f}\n\n"
+            
+            output += "**Top Predictions:**\n"
+            for i, (prob, idx) in enumerate(zip(topk.values, topk.indices)):
+                confidence = float(prob) * 100
+                class_name = class_names[int(idx)]
+                output += f"**{i+1}.** {class_name} - **{confidence:.1f}%**\n"
+            
+            return output
+            
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return f"❌ **Error:** {str(e)}"
 
-@app.route('/predict_base64', methods=['POST'])
-def predict_base64():
-    try:
-        data = request.get_json()
-        
-        if 'image' not in data:
-            return jsonify({"error": "No base64 image provided"}), 400
-        
-        # Decode base64 image
-        image_data = base64.b64decode(data['image'])
-        image = Image.open(io.BytesIO(image_data)).convert('RGB')
-        
-        # Make prediction
-        result = predict_from_image(image, model, class_names, CONFIDENCE_THRESHOLD)
-        
-        return jsonify(result)
+def get_model_info(model_name):
+    """Get information about a specific model"""
+    if model_name not in MODEL_CONFIGS:
+        return "❌ Model not found"
     
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    config = MODEL_CONFIGS[model_name]
+    
+    info = f"**Model:** {model_name.upper()}\n"
+    info += f"**Description:** {config['description']}\n"
+    info += f"**Architecture:** {config['type']}\n"
+    info += f"**Classes:** {len(config['classes'])}\n"
+    info += f"**Confidence Threshold:** {CONFIDENCE_THRESHOLDS[model_name]*100:.0f}%\n"
+    
+    is_loaded = model_name in loaded_models
+    info += f"**Status:** {'✅ Loaded' if is_loaded else '⏳ Not loaded'}\n\n"
+    
+    classes = config['classes']
+    info += "**Supported Conditions:**\n"
+    for i, cls in enumerate(classes, 1):
+        info += f"{i}. {cls}\n"
+    
+    return info
 
-@app.route('/classes', methods=['GET'])
-def get_classes():
-    return jsonify({
-        "classes": class_names,
-        "total_classes": len(class_names)
-    })
+# Create Gradio Interface
+def create_interface():
+    """Create the main Gradio interface"""
+    
+    with gr.Blocks(title="🏥 Multi-Model Healthcare AI") as demo:
+        
+        # Header
+        gr.Markdown("""
+        # 🏥 Multi-Model Healthcare AI
+        
+        AI-powered medical image analysis for **skin diseases**, **teeth conditions**, and **nail disorders**.
+        
+        Upload an image and select a model to get AI predictions with confidence scores.
+        
+        ⚠️ **Medical Disclaimer:** This AI system is for educational and research purposes only. Always consult qualified healthcare professionals for medical advice.
+        """)
+        
+        with gr.Row():
+            # Left Column - Input
+            with gr.Column(scale=1):
+                gr.Markdown("### 📤 Upload & Configure")
+                
+                image_input = gr.Image(
+                    label="Upload Medical Image",
+                    type="pil"
+                )
+                
+                model_dropdown = gr.Dropdown(
+                    choices=list(MODEL_CONFIGS.keys()),
+                    value="dermnet",
+                    label="Select AI Model",
+                    info="Choose the appropriate model for your image type"
+                )
+                
+                top_n_slider = gr.Slider(
+                    minimum=1,
+                    maximum=5,
+                    value=3,
+                    step=1,
+                    label="Number of Predictions",
+                    info="How many top predictions to show"
+                )
+                
+                predict_btn = gr.Button("🔬 Analyze Image", variant="primary")
+                
+            # Right Column - Output  
+            with gr.Column(scale=1):
+                gr.Markdown("### 📊 AI Analysis Results")
+                
+                prediction_output = gr.Markdown(
+                    value="Upload an image and click 'Analyze Image' to see predictions..."
+                )
+                
+                model_info_output = gr.Markdown(
+                    value=get_model_info("dermnet")
+                )
+        
+        # Footer
+        gr.Markdown("""
+        ---
+        
+        **🔬 Models:** DermNet (Skin), Teeth Disease Detection, Nail Disease Detection  
+        **🛡️ Features:** Out-of-domain detection, Confidence thresholds, Multi-model support
+        **🎯 Accuracy:** Built with ResNet18+ViT+CBAM and MobileNetV2 architectures
+        
+        *Created for DevFest 2025 AI Challenge*
+        """)
+        
+        # Event Handlers
+        predict_btn.click(
+            fn=predict_image,
+            inputs=[image_input, model_dropdown, top_n_slider],
+            outputs=prediction_output
+        )
+        
+        model_dropdown.change(
+            fn=get_model_info,
+            inputs=model_dropdown,
+            outputs=model_info_output
+        )
+    
+    return demo
 
-if __name__ == '__main__':
-    print("🔥 Loading model...")
-    model, class_names = load_model()
-    print(f"✅ Model loaded! Classes: {len(class_names)}")
+# Launch the interface
+if __name__ == "__main__":
+    # Pre-load models for faster inference
+    print("🤖 Loading AI models...")
+    for model_name in MODEL_CONFIGS.keys():
+        load_model(model_name)
     
-    print("🌐 Setting up ngrok...")
-    ngrok.set_auth_token(NGROK_TOKEN)
-    public_url = ngrok.connect(5000)
-    print(f"🚀 Public URL: {public_url}")
-    
-    print("🎯 API Endpoints:")
-    print(f"  - Health: {public_url}")
-    print(f"  - Predict: {public_url}/predict (POST with image file)")
-    print(f"  - Predict Base64: {public_url}/predict_base64 (POST with JSON)")
-    print(f"  - Classes: {public_url}/classes")
-    
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    print("🚀 Starting Gradio interface...")
+    demo = create_interface()
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=7860,
+        show_api=False,
+        share=True  # Required for HF Spaces
+    )

@@ -1,118 +1,214 @@
-# 🔬 DermNet AI API
+# Healthcare AI API
 
-API for AI-powered skin disease detection using deep learning.
+Multi-model AI API for healthcare image analysis supporting skin diseases, dental conditions, and nail disorders.
 
-**API URL**: `https://unbenefited-lura-animatingly.ngrok-free.dev`
+## 🩺 Models
 
----
+- **DermNet**: Skin disease classification (ResNet18 + ViT + CBAM) - 14 classes
+- **Teeth**: Dental condition detection (MobileNetV2) - 5 classes  
+- **Nail**: Nail disorder classification (MobileNetV2) - 6 classes
 
-## 📋 API Endpoints
+## 🚀 Quick Start
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/` | GET | Health check |
-| `/predict` | POST | Upload image file |
-| `/predict_base64` | POST | Send base64 image |
-| `/classes` | GET | Get supported diseases |
+```bash
+# Make executable and start API
+chmod +x start_api.sh
+./start_api.sh
+```
 
----
+Or manually:
 
-## 🐍 Python Example
+```bash
+# Install dependencies
+pip install flask flask-cors torch torchvision timm pillow requests numpy
 
+# Start API
+python3 api.py
+```
+
+## 📡 API Endpoints
+
+### Health Check
+```http
+GET /health
+```
+
+### List Models
+```http
+GET /models
+```
+
+### Get Model Classes
+```http
+GET /models/{model_name}/classes
+```
+
+### Make Prediction
+```http
+POST /predict
+Content-Type: application/json
+
+{
+  "model": "dermnet|teeth|nail",
+  "image": "base64_encoded_image",
+  "n": 5
+}
+```
+
+Or with image URL:
+```http
+POST /predict
+Content-Type: application/json
+
+{
+  "model": "dermnet",
+  "image_url": "https://example.com/image.jpg",
+  "n": 3
+}
+```
+
+## 🧪 Testing
+
+```bash
+# Full API testing
+python3 test_api_client.py
+
+# Test with real images
+python3 test_real_images.py
+```
+
+## 📋 Model Details
+
+### DermNet (Skin Diseases)
+- **Architecture**: ResNet18 + Vision Transformer + CBAM Attention
+- **Classes**: 14 skin conditions
+- **Confidence Threshold**: 40%
+- **Input**: 224x224 RGB images
+
+### Teeth (Dental Conditions)  
+- **Architecture**: MobileNetV2
+- **Classes**: 5 dental conditions
+- **Confidence Threshold**: 60%
+- **Input**: 224x224 RGB images
+
+### Nail (Nail Disorders)
+- **Architecture**: MobileNetV2  
+- **Classes**: 6 nail conditions
+- **Confidence Threshold**: 70%
+- **Input**: 224x224 RGB images
+
+## 🔧 Model Files
+
+Place these model files in the project directory:
+- `best_medagen_resnet18_vits_cbam.pth`
+- `best_teeth_model.pth` 
+- `best_nail_model.pth`
+
+## 📊 Response Format
+
+```json
+{
+  "success": true,
+  "model_info": {
+    "name": "dermnet",
+    "architecture": "ResNet18_ViTS_CBAM",
+    "num_classes": 14,
+    "confidence_threshold": 0.4
+  },
+  "result": {
+    "top_prediction": "Acne and Rosacea",
+    "confidence": 0.85,
+    "is_out_of_domain": false,
+    "threshold": 0.4,
+    "top_predictions": [
+      {
+        "rank": 1,
+        "class": "Acne and Rosacea", 
+        "confidence": 0.85
+      }
+    ]
+  },
+  "processing_time": 0.234
+}
+```
+
+## 🛡️ Error Handling
+
+The API includes comprehensive error handling for:
+- Invalid model names
+- Missing/corrupt images
+- Network timeouts
+- Model loading failures
+- Out-of-domain predictions
+
+## 💡 Usage Examples
+
+### Python Client
 ```python
 import requests
+import base64
 
-# Upload and predict skin disease
-with open('skin_image.jpg', 'rb') as f:
-    files = {'image': f}
-    response = requests.post(
-        'https://unbenefited-lura-animatingly.ngrok-free.dev/predict', 
-        files=files
-    )
-    result = response.json()
-    
-    if result['status'] == 'success':
-        print("Top 3 Predictions:")
-        for pred in result['predictions']:
-            print(f"  {pred['rank']}. {pred['class']} - {pred['confidence_percent']:.1f}%")
-    else:
-        print(f"Out of domain: {result['message']}")
+# Health check
+response = requests.get("http://localhost:5000/health")
+
+# Make prediction
+with open("image.jpg", "rb") as f:
+    image_b64 = base64.b64encode(f.read()).decode()
+
+response = requests.post("http://localhost:5000/predict", json={
+    "model": "dermnet",
+    "image": image_b64,
+    "n": 3
+})
+
+result = response.json()
+print(f"Prediction: {result['result']['top_prediction']}")
+print(f"Confidence: {result['result']['confidence']:.2%}")
 ```
 
----
+### cURL
+```bash
+# Health check
+curl http://localhost:5000/health
 
-## � Response Structure
+# List models
+curl http://localhost:5000/models
 
-### Success Response (Confidence ≥ 40%)
-```json
-{
-  "status": "success",
-  "predictions": [
-    {
-      "rank": 1,
-      "class": "Melanoma Skin Cancer Nevi and Moles",
-      "confidence": 0.85,
-      "confidence_percent": 85.0
-    },
-    {
-      "rank": 2,
-      "class": "Eczema Photos",
-      "confidence": 0.12,
-      "confidence_percent": 12.0
-    },
-    {
-      "rank": 3,
-      "class": "Acne and Rosacea Photos",
-      "confidence": 0.03,
-      "confidence_percent": 3.0
-    }
-  ],
-  "max_confidence": 0.85,
-  "threshold": 0.4
-}
+# Get classes
+curl http://localhost:5000/models/dermnet/classes
 ```
 
-### Out of Domain Response (< 40%)
-```json
-{
-  "status": "out_of_domain",
-  "message": "Out of domain (confidence: 35% < 40%)",
-  "max_confidence": 0.35,
-  "threshold": 0.4
-}
-```
+## 🔍 Model Architectures
 
-### Error Response
-```json
-{
-  "error": "No image provided"
-}
-```
+### CBAM Attention Module
+- Channel attention with average and max pooling
+- Spatial attention with configurable kernel size
+- Reduction ratio: 16
 
----
+### ResNet18_ViTS_CBAM
+- ResNet18 backbone with CBAM attention
+- Vision Transformer integration
+- Custom classifier head
 
-## 🏥 Supported Diseases (14 types)
+### MobileNetV2 Models
+- Pre-trained MobileNetV2 backbone
+- Custom classifier for specific conditions
+- Efficient inference for mobile deployment
 
-1. Acne and Rosacea Photos
-2. Actinic Keratosis Basal Cell Carcinoma and other Malignant Lesions
-3. Atopic Dermatitis Photos
-4. Cellulitis Impetigo and other Bacterial Infections
-5. Eczema Photos
-6. Hair Loss Photos Alopecia and other Hair Diseases
-7. Melanoma Skin Cancer Nevi and Moles
-8. Nail Fungus and other Nail Disease
-9. Poison Ivy Photos and other Contact Dermatitis
-10. Psoriasis pictures Lichen Planus and related diseases
-11. Scabies Lyme Disease and other Infestations and Bites
-12. Seborrheic Keratoses and other Benign Tumors
-13. Tinea Ringworm Candidiasis and other Fungal Infections
-14. Warts Molluscum and other Viral Infections
+## 📈 Performance
 
----
+- Average response time: ~0.2-0.5 seconds
+- Supports concurrent requests
+- GPU acceleration when available
+- Automatic CPU fallback
 
-## ⚠️ Notes
+## 🔒 Security
 
-- **File formats**: JPEG, PNG, JPG only
-- **File size**: Under 10MB
-- **Timeout**: 10-15 seconds recommended
-- **Medical disclaimer**: For educational use only
+- Input validation for all endpoints
+- File size limits for image uploads
+- Timeout protection for external URLs
+- Error sanitization in responses
+
+## ⚠️ Medical Disclaimer
+
+This AI system is for **educational and research purposes only**. It should not be used as a substitute for professional medical diagnosis or treatment. Always consult qualified healthcare professionals for medical decisions.
