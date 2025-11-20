@@ -118,40 +118,51 @@ class CBAM(nn.Module):
         
         return x
 
-# ResNet18_ViTS_CBAM Model (exact implementation from API)
+# ResNet18_ViTS_CBAM Model (EXACT from training notebook)
 class ResNet18_ViTS_CBAM(nn.Module):
     def __init__(self, num_classes=14):
         super(ResNet18_ViTS_CBAM, self).__init__()
-        # ResNet18 backbone
-        self.resnet = timm.create_model('resnet18', pretrained=False, num_classes=0)
         
-        # Vision Transformer
-        self.vit = timm.create_model('vit_small_patch16_224', pretrained=False, num_classes=0)
+        # ResNet18 backbone (EXACT từ training)
+        from torchvision.models import resnet18, ResNet18_Weights
+        rn = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
+        self.resnet_backbone = nn.Sequential(*list(rn.children())[:-1])  # [B,512,1,1]
+        res_dim = 512
+        
+        # ViT small patch16 224 (timm)
+        self.vit = timm.create_model("vit_small_patch16_224", pretrained=True)
+        vit_dim = self.vit.embed_dim
+        # bỏ head, chỉ lấy embedding
+        if hasattr(self.vit, "head"):
+            self.vit.reset_classifier(0)
         
         # CBAM attention with spatial_kernel=3 (from training code)
-        self.cbam = CBAM(512, reduction=16, spatial_kernel=3)
+        fused_dim = res_dim + vit_dim
+        self.cbam = CBAM(fused_dim, reduction=16, spatial_kernel=3)
         
         # Classifier combining ResNet and ViT features
         self.classifier = nn.Sequential(
-            nn.Dropout(0.5),
-            nn.Linear(512 + 384, num_classes)  # ResNet: 512, ViT: 384
+            nn.Linear(fused_dim, 512),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.3),
+            nn.Linear(512, num_classes)
         )
     
     def forward(self, x):
-        # ResNet features with CBAM attention
-        resnet_features = self.resnet.forward_features(x)
-        resnet_features = self.cbam(resnet_features)
-        resnet_features = nn.AdaptiveAvgPool2d(1)(resnet_features)
-        resnet_features = torch.flatten(resnet_features, 1)
+        # ResNet branch
+        r = self.resnet_backbone(x)              # [B,512,1,1]
+        r = r.view(r.size(0), -1)                # [B,512]
         
-        # ViT features
-        vit_features = self.vit.forward_features(x)
-        vit_features = vit_features[:, 0]  # CLS token
+        # ViT branch
+        v = self.vit(x)                          # [B,vit_dim]
         
-        # Combine features
-        combined_features = torch.cat([resnet_features, vit_features], dim=1)
-        output = self.classifier(combined_features)
-        return output
+        # Fusion + CBAM
+        feat = torch.cat([r, v], dim=1)          # [B, C]
+        feat_4d = feat.unsqueeze(-1).unsqueeze(-1)  # [B,C,1,1]
+        feat_4d = self.cbam(feat_4d)             # CBAM attention
+        feat = feat_4d.view(feat_4d.size(0), -1)
+        out = self.classifier(feat)
+        return out
 
 def load_model(model_name):
     """Load a specific model"""
