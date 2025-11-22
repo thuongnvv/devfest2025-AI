@@ -24,24 +24,33 @@ CONFIDENCE_THRESHOLDS = {
 # Updated model configurations (exact paths from API)
 MODEL_CONFIGS = {
     "dermnet": {
-        "path": "best_medagen_resnet18_vits_cbam.pth",
-        "description": "Skin disease detection using ResNet18 + ViT + CBAM",
-        "architecture": "ResNet18 + Vision Transformer + CBAM Attention",
-        "type": "fusion_model",
+        "path": "best_medagen_swin_convnext_cbam_23classes.pth",
+        "description": "Skin disease detection using Swin Tiny + ConvNeXt + CBAM",
+        "architecture": "Swin Transformer + ConvNeXt + CBAM Fusion",
+        "type": "vit_cnn_hybrid",
         "classes": [
             "Acne and Rosacea Photos",
-            "Actinic Keratosis Basal Cell Carcinoma and other Malignant Lesions", 
+            "Actinic Keratosis Basal Cell Carcinoma and other Malignant Lesions",
             "Atopic Dermatitis Photos",
+            "Bullous Disease Photos",
             "Cellulitis Impetigo and other Bacterial Infections",
             "Eczema Photos",
+            "Exanthems and Drug Eruptions",
             "Hair Loss Photos Alopecia and other Hair Diseases",
+            "Herpes HPV and other STDs Photos",
+            "Light Diseases and Disorders of Pigmentation",
+            "Lupus and other Connective Tissue diseases",
             "Melanoma Skin Cancer Nevi and Moles",
             "Nail Fungus and other Nail Disease",
             "Poison Ivy Photos and other Contact Dermatitis",
             "Psoriasis pictures Lichen Planus and related diseases",
-            "Scabies Lyme Disease and other Infestations and Bites", 
+            "Scabies Lyme Disease and other Infestations and Bites",
             "Seborrheic Keratoses and other Benign Tumors",
+            "Systemic Disease",
             "Tinea Ringworm Candidiasis and other Fungal Infections",
+            "Urticaria Hives",
+            "Vascular Tumors",
+            "Vasculitis Photos",
             "Warts Molluscum and other Viral Infections"
         ]
     },
@@ -118,6 +127,115 @@ class CBAM(nn.Module):
         sp_att = torch.sigmoid(self.spatial(s))
         x = x * sp_att
         return x
+
+# CBAMBlock for ViTCNNHybrid (from DermNet 23 classes training)
+class CBAMBlock(nn.Module):
+    def __init__(self, channels, reduction=16, spatial_kernel=7):
+        super(CBAMBlock, self).__init__()
+        # Channel attention
+        self.channel_att = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(channels, channels // reduction, 1, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels // reduction, channels, 1, bias=False),
+            nn.Sigmoid()
+        )
+        # Spatial attention
+        self.spatial_att = nn.Sequential(
+            nn.Conv2d(2, 1, kernel_size=spatial_kernel, padding=spatial_kernel // 2, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        # Channel attention
+        ca = self.channel_att(x)
+        x = x * ca
+        # Spatial attention
+        sa = torch.cat([
+            torch.mean(x, dim=1, keepdim=True), 
+            torch.max(x, dim=1, keepdim=True)[0]
+        ], dim=1)
+        sa = self.spatial_att(sa)
+        x = x * sa
+        return x
+
+# ViTCNNHybrid Model (Swin Tiny + ConvNeXt Tiny + CBAM) for DermNet 23 classes
+class ViTCNNHybrid(nn.Module):
+    def __init__(self, num_classes, use_cbam=True):
+        super(ViTCNNHybrid, self).__init__()
+        
+        self.vit = timm.create_model(
+            'swin_tiny_patch4_window7_224', pretrained=True, num_classes=0, drop_rate=0.3
+        )
+        self.vit_out_features = 768
+        
+        # ConvNeXt-Tiny
+        self.cnn = timm.create_model(
+            'convnext_tiny', pretrained=True, num_classes=0, drop_rate=0.3, global_pool=''
+        )
+        self.cnn_out_features = 768
+        self.cnn_pool = nn.AdaptiveAvgPool2d((7, 7))
+        
+        # Gates
+        self.vit_gate = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(self.vit_out_features, self.vit_out_features // 16, 1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(self.vit_out_features // 16, self.vit_out_features, 1),
+            nn.Sigmoid()
+        )
+        self.cnn_gate = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(self.cnn_out_features, self.cnn_out_features // 16, 1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(self.cnn_out_features // 16, self.cnn_out_features, 1),
+            nn.Sigmoid()
+        )
+        
+        self.match_dim = nn.Conv2d(self.vit_out_features, self.cnn_out_features, 1)
+        
+        # Learnable α for dynamic fusion
+        self.alpha_param = nn.Parameter(torch.tensor(0.5))
+        
+        # Fusion
+        fusion_layers = [
+            nn.Conv2d(self.cnn_out_features, 256, kernel_size=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.3)
+        ]
+        if use_cbam:
+            fusion_layers.append(CBAMBlock(256))
+        fusion_layers.append(nn.AdaptiveAvgPool2d((1, 1)))
+        self.fusion = nn.Sequential(*fusion_layers)
+        
+        # FC
+        self.fc = nn.Sequential(
+            nn.Linear(256, 512),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.4),
+            nn.Linear(512, num_classes)
+        )
+    
+    def forward(self, x):
+        # ViT branch
+        vit_out = self.vit(x)
+        vit_out = vit_out.view(-1, self.vit_out_features, 1, 1).expand(-1, -1, 7, 7)
+        vit_out = vit_out * self.vit_gate(vit_out)
+        
+        # CNN branch
+        cnn_out = self.cnn(x)
+        cnn_out = self.cnn_pool(cnn_out)
+        cnn_out = cnn_out * self.cnn_gate(cnn_out)
+        
+        # Dynamic Fusion
+        alpha = torch.sigmoid(self.alpha_param)
+        combined = alpha * vit_out + (1 - alpha) * cnn_out
+        
+        combined = self.fusion(combined)
+        combined = combined.view(combined.size(0), -1)
+        out = self.fc(combined)
+        return out
 
 # ResNet18_ViTS_CBAM Model (EXACT from training notebook)
 class ResNet18_ViTS_CBAM(nn.Module):
@@ -286,9 +404,10 @@ def load_model(model_name):
             print(f"📦 Using legacy format for {model_name}")
         
         # Create model based on type (exact API implementation)
-        if config["type"] == "fusion_model":
-            # DermNet model - exact architecture
-            model = ResNet18_ViTS_CBAM(num_classes=len(config["classes"]))
+        if config["type"] == "vit_cnn_hybrid":
+            # DermNet model - ViTCNNHybrid (Swin + ConvNeXt + CBAM)
+            model = ViTCNNHybrid(num_classes=len(config["classes"]))
+            print(f"🔧 Created ViTCNNHybrid for {model_name} with {len(config['classes'])} classes")
         elif config["type"] == "cbam_resnet18":
             # Nail and Teeth models - CBAMResNet18 architecture
             model = CBAMResNet18(num_classes=len(config["classes"]))
