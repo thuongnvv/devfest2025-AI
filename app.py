@@ -392,9 +392,15 @@ def create_interface():
             with gr.Column(scale=1):
                 gr.Markdown("### 📤 Upload & Configure")
                 
-                image_input = gr.Image(
-                    label="Upload Medical Image",
-                    type="pil"
+                image_input = gr.Textbox(
+                    label="Image URL or File Path",
+                    placeholder="Enter image URL (e.g., https://example.com/image.jpg) or upload file",
+                    lines=2
+                )
+                
+                file_upload = gr.File(
+                    label="Or Upload Image File",
+                    type="filepath"
                 )
                 
                 model_dropdown = gr.Dropdown(
@@ -439,9 +445,16 @@ def create_interface():
         """)
         
         # Event Handlers
+        def handle_prediction(url_input, file_input, model, top_n):
+            # Prioritize file upload over URL
+            image_source = file_input if file_input else url_input
+            if not image_source:
+                return "❌ **Error:** Please provide an image URL or upload a file."
+            return predict_image(image_source, model, top_n)
+        
         predict_btn.click(
-            fn=predict_image,
-            inputs=[image_input, model_dropdown, top_n_slider],
+            fn=handle_prediction,
+            inputs=[image_input, file_upload, model_dropdown, top_n_slider],
             outputs=prediction_output
         )
         
