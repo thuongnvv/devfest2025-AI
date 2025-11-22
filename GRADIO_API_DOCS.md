@@ -62,9 +62,9 @@ print(f"Confidence: {result['predictions'][0]['confidence']*100:.1f}%")
 
 ## 📡 API Endpoints
 
-### 1. 🔬 Predict Image - JSON Output (`/handle_prediction`)
+### 1. 🔬 Predict Image (`/handle_prediction`)
 
-**Returns**: JSON string ✅
+**Returns**: JSON string
 
 **Parameters**:
 - `image_url` (str): HTTP/HTTPS image URL
@@ -76,8 +76,8 @@ print(f"Confidence: {result['predictions'][0]['confidence']*100:.1f}%")
 {
   "success": true,
   "model": "dermnet",
-  "architecture": "Swin Tiny + ConvNeXt + CBAM",
-  "description": "Skin disease detection...",
+  "architecture": "Swin Transformer + ConvNeXt + CBAM Fusion",
+  "description": "Skin disease detection using Swin Tiny + ConvNeXt + CBAM",
   "predictions": [
     {"class": "Acne and Rosacea Photos", "confidence": 0.524},
     {"class": "Atopic Dermatitis Photos", "confidence": 0.160}
@@ -110,27 +110,7 @@ if result['success']:
 
 ---
 
-### 2. 📊 Predict Image - Markdown Output (`/handle_prediction_ui`)
-
-**Returns**: Markdown string (for UI display)
-
-**Parameters**: Same as `/handle_prediction`
-
-**Example Output**:
-```markdown
-### 🎯 Top 3 Predictions
-
-1. **Acne and Rosacea Photos** - 52.4%
-2. **Atopic Dermatitis Photos** - 16.0%
-3. **Eczema Photos** - 6.9%
-
----
-*Model: Skin disease detection using Swin Tiny + ConvNeXt + CBAM | Architecture: Swin Tiny + ConvNeXt + CBAM*
-```
-
----
-
-### 3. ℹ️ Get Model Info (`/get_model_info`)
+### 2. ℹ️ Get Model Info (`/get_model_info`)
 
 **Returns**: Markdown string
 
@@ -145,7 +125,7 @@ print(info)
 
 ---
 
-### 4. 📋 List All Models (`/list_models`)
+### 3. 📋 List All Models (`/list_models`)
 
 **Returns**: Markdown string
 
@@ -159,7 +139,7 @@ print(models)
 
 ---
 
-### 5. 🏷️ Get Model Classes (`/get_classes`)
+### 4. 🏷️ Get Model Classes (`/get_classes`)
 
 **Returns**: Markdown string
 
@@ -176,13 +156,13 @@ print(classes)
 
 | Model | Domain | Architecture | Classes | File Size |
 |-------|--------|--------------|---------|-----------|
-| `dermnet` | Skin diseases | Swin Tiny + ConvNeXt + CBAM | 23 | 216MB |
-| `teeth` | Dental conditions | ResNet18 + CBAM | 6 (incl. Unknown) | 45MB |
-| `nail` | Nail disorders | ResNet18 + CBAM | 7 (incl. Unknown) | 45MB |
+| `dermnet` | Skin diseases | Swin Transformer + ConvNeXt + CBAM Fusion | 23 | 216MB |
+| `teeth` | Dental conditions | ResNet18 + CBAM Attention | 6 (incl. Unknown) | 45MB |
+| `nail` | Nail disorders | ResNet18 + CBAM Attention | 7 (incl. Unknown) | 45MB |
 
 **Model Details:**
-- **DermNet**: Advanced hybrid model combining Vision Transformer (Swin) and CNN (ConvNeXt) with gated fusion and CBAM attention. Covers 23 comprehensive skin disease categories.
-- **Teeth & Nail**: Efficient ResNet18-based models with CBAM attention, including Unknown class for out-of-domain detection.
+- **DermNet**: Advanced hybrid model combining Vision Transformer (Swin Tiny) and CNN (ConvNeXt Tiny) with gated fusion and CBAM attention. Covers 23 comprehensive skin disease categories.
+- **Teeth & Nail**: Efficient ResNet18-based models with CBAM (Convolutional Block Attention Module), including Unknown class for out-of-domain detection.
 
 ## 💻 Code Examples
 
@@ -307,10 +287,7 @@ print(client.view_api())
 
 **Output**:
 ```
-Named API endpoints: 5
-
- - predict(image_url, select_ai_model, number_of_predictions, api_name="/handle_prediction_ui") -> value_14
-    Returns: [Markdown] str
+Named API endpoints: 4
 
  - predict(image_url, select_ai_model, number_of_predictions, api_name="/handle_prediction") -> json_output
     Returns: [Textbox] str (JSON)
@@ -329,8 +306,7 @@ Named API endpoints: 5
 
 | Endpoint | Output Format | Use Case |
 |----------|---------------|----------|
-| `/handle_prediction` | **JSON** ✅ | API clients, programmatic access |
-| `/handle_prediction_ui` | Markdown | UI display, human-readable |
+| `/handle_prediction` | JSON string | API clients, programmatic access |
 | `/get_model_info` | Markdown | Model details |
 | `/list_models` | Markdown | Browse models |
 | `/get_classes` | Markdown | Class names |
