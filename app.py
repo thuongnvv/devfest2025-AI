@@ -246,13 +246,21 @@ def predict_image(image, model_name, top_n):
         config = MODEL_CONFIGS[model_name]
         class_names = config["classes"]
         
-        # Preprocess image
-        if isinstance(image, str):
-            image = Image.open(image).convert('RGB')
-        else:
-            image = image.convert('RGB')
+        # Preprocess image - handle different input types
+        try:
+            if isinstance(image, str):
+                # If path string, open it
+                pil_image = Image.open(image).convert('RGB')
+            elif isinstance(image, Image.Image):
+                # Already PIL Image
+                pil_image = image.convert('RGB')
+            else:
+                # Try to convert to PIL Image
+                pil_image = Image.fromarray(image).convert('RGB')
+        except Exception as img_err:
+            return f"❌ **Error:** Failed to process image: {str(img_err)}"
             
-        image_tensor = transforms_inference(image).unsqueeze(0).to(DEVICE)
+        image_tensor = transforms_inference(pil_image).unsqueeze(0).to(DEVICE)
         
         # Make prediction
         with torch.no_grad():
