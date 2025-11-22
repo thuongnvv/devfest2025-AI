@@ -360,38 +360,21 @@ def predict_image_from_pil(pil_image, model_name, top_n):
         with torch.no_grad():
             logits = model(image_tensor)
             probabilities = torch.softmax(logits, dim=1)[0]
-            max_prob, max_idx = torch.max(probabilities, dim=0)
-            max_confidence = float(max_prob)
             
-            entropy = -torch.sum(probabilities * torch.log(probabilities + 1e-8))
-            normalized_entropy = float(entropy / torch.log(torch.tensor(len(class_names))))
-            
-            threshold = CONFIDENCE_THRESHOLDS.get(model_name, 0.50)
-            is_out_of_domain = (max_confidence < threshold) or (normalized_entropy > 0.8)
-            
-            if is_out_of_domain:
-                reasons = []
-                if max_confidence < threshold:
-                    reasons.append(f"low confidence ({max_confidence*100:.1f}% < {threshold*100:.0f}%)")
-                if normalized_entropy > 0.8:
-                    reasons.append(f"high uncertainty (entropy: {normalized_entropy:.3f})")
-                
-                output = f"🚫 **Out of Domain**\n\n"
-                output += f"**Reason:** {' and '.join(reasons)}\n"
-                output += f"**Suggestion:** This image may not contain {config['description'].lower()}."
-                return output
-            
+            # Get top N predictions
             top_n = min(top_n, len(class_names))
             topk = torch.topk(probabilities, k=top_n)
             
-            output = f"✅ **Prediction Successful**\n\n"
-            output += f"**Model:** {config['description']}\n"
-            output += f"**Max Confidence:** {max_confidence*100:.1f}%\n\n"
-            output += "**Top Predictions:**\n"
+            # Format output
+            output = f"### 🎯 Top {top_n} Predictions\n\n"
+            
             for i, (prob, idx) in enumerate(zip(topk.values, topk.indices)):
                 confidence = float(prob) * 100
                 class_name = class_names[int(idx)]
-                output += f"**{i+1}.** {class_name} - **{confidence:.1f}%**\n"
+                output += f"{i+1}. **{class_name}** - {confidence:.1f}%\n"
+            
+            output += f"\n---\n"
+            output += f"*Model: {config['description']} | Architecture: {config['architecture']}*"
             
             return output
     except Exception as e:
