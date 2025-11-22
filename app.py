@@ -393,14 +393,9 @@ def create_interface():
                 gr.Markdown("### 📤 Upload & Configure")
                 
                 image_input = gr.Textbox(
-                    label="Image URL or File Path",
-                    placeholder="Enter image URL (e.g., https://example.com/image.jpg) or upload file",
-                    lines=2
-                )
-                
-                file_upload = gr.File(
-                    label="Or Upload Image File",
-                    type="filepath"
+                    label="Image URL",
+                    placeholder="Enter image URL (e.g., https://example.com/image.jpg)",
+                    lines=1
                 )
                 
                 model_dropdown = gr.Dropdown(
@@ -445,16 +440,22 @@ def create_interface():
         """)
         
         # Event Handlers
-        def handle_prediction(url_input, file_input, model, top_n):
-            # Prioritize file upload over URL
-            image_source = file_input if file_input else url_input
+        def handle_prediction(url_or_file, model, top_n):
+            # Handle both URL string and file dict from Gradio client
+            if isinstance(url_or_file, dict):
+                # Gradio client sends {'path': 'url'} for URLs
+                image_source = url_or_file.get('path', '')
+            else:
+                # Direct string or file path
+                image_source = url_or_file
+            
             if not image_source:
                 return "❌ **Error:** Please provide an image URL or upload a file."
             return predict_image(image_source, model, top_n)
         
         predict_btn.click(
             fn=handle_prediction,
-            inputs=[image_input, file_upload, model_dropdown, top_n_slider],
+            inputs=[image_input, model_dropdown, top_n_slider],
             outputs=prediction_output
         )
         
