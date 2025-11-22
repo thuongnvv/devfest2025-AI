@@ -479,20 +479,29 @@ def predict_image_from_pil(pil_image, model_name, top_n):
             top_n = min(top_n, len(class_names))
             topk = torch.topk(probabilities, k=top_n)
             
-            # Format output
-            output = f"### 🎯 Top {top_n} Predictions\n\n"
+            # Build JSON response
+            predictions = []
+            for prob, idx in zip(topk.values, topk.indices):
+                predictions.append({
+                    "class": class_names[int(idx)],
+                    "confidence": float(prob)
+                })
             
-            for i, (prob, idx) in enumerate(zip(topk.values, topk.indices)):
-                confidence = float(prob) * 100
-                class_name = class_names[int(idx)]
-                output += f"{i+1}. **{class_name}** - {confidence:.1f}%\n"
+            result = {
+                "success": True,
+                "model": model_name,
+                "architecture": config['architecture'],
+                "description": config['description'],
+                "predictions": predictions
+            }
             
-            output += f"\n---\n"
-            output += f"*Model: {config['description']} | Architecture: {config['architecture']}*"
-            
-            return output
+            return json.dumps(result, indent=2)
     except Exception as e:
-        return f"❌ **Error:** {str(e)}"
+        error_result = {
+            "success": False,
+            "error": str(e)
+        }
+        return json.dumps(error_result, indent=2)
 
 def predict_image(image, model_name, top_n):
     """Predict using uploaded image"""
@@ -549,23 +558,30 @@ def predict_image(image, model_name, top_n):
             top_n = min(top_n, len(class_names))
             topk = torch.topk(probabilities, k=top_n)
             
-            # Format prediction output
-            max_confidence = float(topk.values[0])
+            # Build JSON response
+            predictions = []
+            for prob, idx in zip(topk.values, topk.indices):
+                predictions.append({
+                    "class": class_names[int(idx)],
+                    "confidence": float(prob)
+                })
             
-            output = f"### 🎯 Top {top_n} Predictions\n\n"
+            result = {
+                "success": True,
+                "model": model_name,
+                "architecture": config['architecture'],
+                "description": config['description'],
+                "predictions": predictions
+            }
             
-            for i, (prob, idx) in enumerate(zip(topk.values, topk.indices)):
-                confidence = float(prob) * 100
-                class_name = class_names[int(idx)]
-                output += f"{i+1}. **{class_name}** - {confidence:.1f}%\n"
-            
-            output += f"\n---\n"
-            output += f"*Model: {config['description']} | Architecture: {config['architecture']}*"
-            
-            return output
+            return json.dumps(result, indent=2)
             
     except Exception as e:
-        return f"❌ **Error:** {str(e)}"
+        error_result = {
+            "success": False,
+            "error": str(e)
+        }
+        return json.dumps(error_result, indent=2)
 
 def get_model_info(model_name):
     """Get information about a specific model"""
@@ -665,6 +681,18 @@ def create_interface():
                 )
                 get_classes_btn = gr.Button("🏷️ Get Classes", variant="primary")
                 classes_output = gr.Markdown()
+            
+            # Tab 4: JSON API (Hidden - for API access only)
+            with gr.Tab("🔌 JSON API", visible=False):
+                api_url_input = gr.Textbox(label="Image URL")
+                api_model_dropdown = gr.Dropdown(
+                    choices=list(MODEL_CONFIGS.keys()),
+                    value="dermnet",
+                    label="Model"
+                )
+                api_top_n = gr.Slider(1, 5, 3, step=1, label="Top N")
+                api_predict_btn = gr.Button("Predict (JSON)")
+                api_json_output = gr.Textbox(label="JSON Result")
         
         # Footer
         gr.Markdown("""
@@ -678,8 +706,31 @@ def create_interface():
         """)
         
         # Event Handlers
+        def format_json_to_markdown(json_str):
+            """Format JSON result to Markdown for UI display"""
+            try:
+                result = json.loads(json_str)
+                
+                if not result.get("success", False):
+                    return f"❌ **Error:** {result.get('error', 'Unknown error')}"
+                
+                # Format predictions as Markdown
+                output = f"### 🎯 Top {len(result['predictions'])} Predictions\n\n"
+                
+                for i, pred in enumerate(result['predictions'], 1):
+                    class_name = pred['class']
+                    confidence = pred['confidence'] * 100
+                    output += f"{i}. **{class_name}** - {confidence:.1f}%\n"
+                
+                output += f"\n---\n"
+                output += f"*Model: {result['description']} | Architecture: {result['architecture']}*"
+                
+                return output
+            except Exception as e:
+                return f"❌ **Error formatting result:** {str(e)}"
+        
         def handle_prediction(url_input, model, top_n):
-            """Handle prediction from URL or file path"""
+            """Handle prediction from URL or file path - returns JSON"""
             pil_image = None
             
             # CASE 1: Dict from Gradio client (contains file path after auto-download)
@@ -689,7 +740,8 @@ def create_interface():
                     try:
                         pil_image = Image.open(file_path).convert('RGB')
                     except Exception as e:
-                        return f"❌ **Error:** Cannot open image file: {e}"
+                        error = {"success": False, "error": f"Cannot open image file: {e}"}
+                        return json.dumps(error, indent=2)
             
             # CASE 2: String - could be URL or stringified dict
             elif isinstance(url_input, str):
@@ -699,7 +751,8 @@ def create_interface():
                 if url_input.startswith(('http://', 'https://')):
                     pil_image = download_image_from_url(url_input)
                     if pil_image is None:
-                        return "❌ **Error:** Failed to download image from URL"
+                        error = {"success": False, "error": "Failed to download image from URL"}
+                        return json.dumps(error, indent=2)
                 
                 # Stringified dict
                 elif url_input.startswith('{'):
@@ -708,15 +761,23 @@ def create_interface():
                         parsed = ast.literal_eval(url_input)
                         return handle_prediction(parsed, model, top_n)
                     except:
-                        return "❌ **Error:** Invalid input format"
+                        error = {"success": False, "error": "Invalid input format"}
+                        return json.dumps(error, indent=2)
                 else:
-                    return "❌ **Error:** Please enter a valid HTTP/HTTPS URL"
+                    error = {"success": False, "error": "Please enter a valid HTTP/HTTPS URL"}
+                    return json.dumps(error, indent=2)
             
             if pil_image is None:
-                return "❌ **Error:** No image provided"
+                error = {"success": False, "error": "No image provided"}
+                return json.dumps(error, indent=2)
             
-            # Predict using the PIL image
+            # Predict using the PIL image (returns JSON)
             return predict_image_from_pil(pil_image, model, top_n)
+        
+        def handle_prediction_ui(url_input, model, top_n):
+            """Handle prediction for UI - converts JSON to Markdown"""
+            json_result = handle_prediction(url_input, model, top_n)
+            return format_json_to_markdown(json_result)
         
         def list_models():
             """List all available models with their info"""
@@ -747,10 +808,18 @@ def create_interface():
             return output
         
         # Connect event handlers
+        # UI button uses Markdown formatting (via handle_prediction_ui wrapper)
         predict_btn.click(
-            fn=handle_prediction,
+            fn=handle_prediction_ui,
             inputs=[image_input, model_dropdown, top_n_slider],
-            outputs=prediction_output,
+            outputs=prediction_output
+        )
+        
+        # JSON API endpoint (returns raw JSON)
+        api_predict_btn.click(
+            fn=handle_prediction,
+            inputs=[api_url_input, api_model_dropdown, api_top_n],
+            outputs=api_json_output,
             api_name="handle_prediction"
         )
         
