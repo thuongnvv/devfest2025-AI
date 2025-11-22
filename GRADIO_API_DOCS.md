@@ -62,49 +62,115 @@ print(f"Confidence: {result['predictions'][0]['confidence']*100:.1f}%")
 
 ## 📡 API Endpoints
 
-### 1. Predict Image (`/handle_prediction`)
+### 1. 🔬 Predict Image - JSON Output (`/handle_prediction`)
+
+**Returns**: JSON string ✅
 
 **Parameters**:
 - `image_url` (str): HTTP/HTTPS image URL
-- `select_ai_model` (str): Model name - `"dermnet"` | `"teeth"` | `"nail"`
-- `number_of_predictions` (int): Number of top predictions (1-5)
+- `select_ai_model` (str): `"dermnet"` | `"teeth"` | `"nail"`
+- `number_of_predictions` (int): 1-5
 
-**Returns**: JSON string with prediction results
+**Success Response**:
+```json
+{
+  "success": true,
+  "model": "dermnet",
+  "architecture": "Swin Tiny + ConvNeXt + CBAM",
+  "description": "Skin disease detection...",
+  "predictions": [
+    {"class": "Acne and Rosacea Photos", "confidence": 0.524},
+    {"class": "Atopic Dermatitis Photos", "confidence": 0.160}
+  ]
+}
+```
+
+**Error Response**:
+```json
+{
+  "success": false,
+  "error": "Failed to download image from URL"
+}
+```
 
 **Example**:
 ```python
+import json
 result_json = client.predict(
     "https://example.com/image.jpg",
     "dermnet",
     3,
     api_name="/handle_prediction"
 )
-
-# Parse JSON
-import json
 result = json.loads(result_json)
 if result['success']:
     for pred in result['predictions']:
         print(f"{pred['class']}: {pred['confidence']*100:.1f}%")
 ```
 
-### 2. Get Model Info (`/get_model_info`)
+---
+
+### 2. 📊 Predict Image - Markdown Output (`/handle_prediction_ui`)
+
+**Returns**: Markdown string (for UI display)
+
+**Parameters**: Same as `/handle_prediction`
+
+**Example Output**:
+```markdown
+### 🎯 Top 3 Predictions
+
+1. **Acne and Rosacea Photos** - 52.4%
+2. **Atopic Dermatitis Photos** - 16.0%
+3. **Eczema Photos** - 6.9%
+
+---
+*Model: Skin disease detection using Swin Tiny + ConvNeXt + CBAM | Architecture: Swin Tiny + ConvNeXt + CBAM*
+```
+
+---
+
+### 3. ℹ️ Get Model Info (`/get_model_info`)
+
+**Returns**: Markdown string
 
 **Parameters**:
 - `select_ai_model` (str): Model name
 
-**Returns**: Markdown-formatted model information
+**Example**:
+```python
+info = client.predict("dermnet", api_name="/get_model_info")
+print(info)
+```
 
-### 3. List Models (`/list_models`)
+---
 
-**Returns**: Markdown-formatted list of all available models
+### 4. 📋 List All Models (`/list_models`)
 
-### 4. Get Classes (`/get_classes`)
+**Returns**: Markdown string
+
+**Parameters**: None
+
+**Example**:
+```python
+models = client.predict(api_name="/list_models")
+print(models)
+```
+
+---
+
+### 5. 🏷️ Get Model Classes (`/get_classes`)
+
+**Returns**: Markdown string
 
 **Parameters**:
-- `select_ai_model` (str): Model name
+- `select_model` (str): Model name
 
-**Returns**: Markdown-formatted list of classes for the specified model
+**Example**:
+```python
+classes = client.predict("dermnet", api_name="/get_classes")
+print(classes)
+```
 
 ## 🏥 Available Models
 
@@ -241,18 +307,40 @@ print(client.view_api())
 
 **Output**:
 ```
-Named API endpoints: 2
+Named API endpoints: 5
 
-- predict(..., api_name="/handle_prediction") -> value
-  Parameters:
-   - image_url: str
-   - select_ai_model: Literal[dermnet, teeth, nail]
-   - number_of_predictions: float (1-5)
+ - predict(image_url, select_ai_model, number_of_predictions, api_name="/handle_prediction_ui") -> value_14
+    Returns: [Markdown] str
 
-- predict(..., api_name="/get_model_info") -> value
-  Parameters:
-   - select_ai_model: Literal[dermnet, teeth, nail]
+ - predict(image_url, select_ai_model, number_of_predictions, api_name="/handle_prediction") -> json_output
+    Returns: [Textbox] str (JSON)
+
+ - predict(select_ai_model, api_name="/get_model_info") -> value_15
+    Returns: [Markdown] str
+
+ - predict(api_name="/list_models") -> value_18
+    Returns: [Markdown] str
+
+ - predict(select_model, api_name="/get_classes") -> value_22
+    Returns: [Markdown] str
 ```
+
+## 📊 API Summary
+
+| Endpoint | Output Format | Use Case |
+|----------|---------------|----------|
+| `/handle_prediction` | **JSON** ✅ | API clients, programmatic access |
+| `/handle_prediction_ui` | Markdown | UI display, human-readable |
+| `/get_model_info` | Markdown | Model details |
+| `/list_models` | Markdown | Browse models |
+| `/get_classes` | Markdown | Class names |
+
+## ⚠️ Image URL Requirements
+
+- **Format**: JPEG, PNG, WebP
+- **Protocol**: HTTP or HTTPS only
+- **Accessibility**: Must be publicly accessible
+- **Size**: Auto-resized to 224x224
 
 ## 🔧 Installation
 
@@ -260,70 +348,6 @@ Named API endpoints: 2
 pip install gradio-client
 ```
 
-## ⚠️ Image URL Requirements
-
-- **Format**: JPEG, PNG, WebP
-- **Protocol**: Must be HTTP or HTTPS
-- **Accessibility**: URL must be publicly accessible
-- **Size**: Any (auto-resized to 224x224)
-
-## 📝 Response Format
-
-Predictions are returned as **Markdown-formatted strings**:
-
-```markdown
-### 🎯 Top 3 Predictions
-
-1. **Acne and Rosacea Photos** - 85.2%
-2. **Eczema Photos** - 12.4%
-3. **Psoriasis pictures** - 2.1%
-
----
-*Confidence Threshold: 40% | Model: DermNet (ResNet18+ViT+CBAM)*
-```
-
-Out-of-domain detection:
-```markdown
-🚫 **Out of Domain**
-
-The image does not match any known condition with sufficient confidence.
-- **Highest confidence:** 32.4% (Acne)
-- **Threshold:** 40%
-
-💡 **Suggestions:**
-- Ensure image shows relevant medical condition
-- Try different lighting/angle
-- Select correct AI model
-```
-
-## 🧪 Testing
-
-Complete test notebook: `test_hf_api.ipynb`
-
-```python
-# Cell 1: Connect
-from gradio_client import Client
-client = Client("thuonguyenvan/medagenn")
-
-# Cell 2: Test URL
-test_url = "https://example.com/image.jpg"
-
-# Cell 3: Test all models
-for model in ["dermnet", "teeth", "nail"]:
-    result = client.predict(test_url, model, 3, api_name="/handle_prediction")
-    print(f"\n{model}: {result}")
-```
-
-## 🌐 Space URL
-
-**Web Interface**: https://huggingface.co/spaces/thuonguyenvan/medagenn
-
 ## ⚠️ Medical Disclaimer
 
-This API is for **educational and research purposes only**. Not for medical diagnosis or treatment. Always consult qualified healthcare professionals for medical decisions.
-
-## 📚 Related Files
-
-- `test_hf_api.ipynb` - Interactive testing notebook
-- `app.py` - Gradio application source
-- `API_DOCS.md` - Flask REST API documentation (localhost)
+This API is for **educational and research purposes only**. Not for medical diagnosis. Always consult qualified healthcare professionals.
