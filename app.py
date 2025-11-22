@@ -495,44 +495,43 @@ def create_interface():
         
         # Event Handlers
         def handle_prediction(url_input, model, top_n):
-            """Handle prediction from URL input - force URL only, no temp files"""
+            """Handle prediction from URL or file path"""
+            pil_image = None
             
-            # Clean up input - handle various formats
-            url = None
-            
+            # CASE 1: Dict from Gradio client (contains file path after auto-download)
             if isinstance(url_input, dict):
-                # Dict from Gradio client
-                url = url_input.get('path', '') or url_input.get('url', '')
+                file_path = url_input.get('path', '')
+                if file_path:
+                    try:
+                        pil_image = Image.open(file_path).convert('RGB')
+                    except Exception as e:
+                        return f"❌ **Error:** Cannot open image file: {e}"
+            
+            # CASE 2: String - could be URL or stringified dict
             elif isinstance(url_input, str):
-                # Check if stringified dict
-                if url_input.startswith('{') and ('path' in url_input or 'url' in url_input):
+                url_input = url_input.strip()
+                
+                # Direct HTTP URL
+                if url_input.startswith(('http://', 'https://')):
+                    pil_image = download_image_from_url(url_input)
+                    if pil_image is None:
+                        return "❌ **Error:** Failed to download image from URL"
+                
+                # Stringified dict
+                elif url_input.startswith('{'):
                     try:
                         import ast
                         parsed = ast.literal_eval(url_input)
-                        # Try to extract URL from dict, not temp path
-                        url = parsed.get('url') or parsed.get('path', '')
+                        return handle_prediction(parsed, model, top_n)
                     except:
-                        url = url_input
+                        return "❌ **Error:** Invalid input format"
                 else:
-                    url = url_input.strip()
-            else:
-                url = str(url_input) if url_input else ''
-            
-            if not url:
-                return "❌ **Error:** Please enter an image URL."
-            
-            # CRITICAL: Only accept HTTP/HTTPS URLs - ignore temp file paths
-            if not url.startswith(('http://', 'https://')):
-                return "❌ **Error:** Please enter a valid HTTP/HTTPS image URL (e.g., https://example.com/image.jpg)"
-            
-            # Download image ourselves with proper User-Agent
-            print(f"🌐 Downloading image from: {url}")
-            pil_image = download_image_from_url(url)
+                    return "❌ **Error:** Please enter a valid HTTP/HTTPS URL"
             
             if pil_image is None:
-                return f"❌ **Error:** Failed to download image from URL. Please check:\n- URL is accessible\n- URL points to an image file\n- Website allows downloads"
+                return "❌ **Error:** No image provided"
             
-            # Predict using the downloaded PIL image
+            # Predict using the PIL image
             return predict_image_from_pil(pil_image, model, top_n)
         
         predict_btn.click(
