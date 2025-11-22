@@ -41,11 +41,13 @@ print(result)
 
 ## 🏥 Available Models
 
-| Model | Domain | Classes | Threshold |
-|-------|--------|---------|-----------|
-| `dermnet` | Skin diseases | 14 | 40% |
-| `teeth` | Dental conditions | 5 | 60% |
-| `nail` | Nail disorders | 6 | 70% |
+| Model | Domain | Architecture | Classes | File Size |
+|-------|--------|--------------|---------|-----------|
+| `dermnet` | Skin diseases | ResNet18 + ViT + CBAM | 14 | 128MB |
+| `teeth` | Dental conditions | ResNet18 + CBAM | 6 (incl. Unknown) | 45MB |
+| `nail` | Nail disorders | ResNet18 + CBAM | 7 (incl. Unknown) | 45MB |
+
+**Note**: All models now use advanced architectures with CBAM attention mechanism. Teeth and nail models include Unknown class for out-of-domain detection.
 
 ## 💻 Code Examples
 
