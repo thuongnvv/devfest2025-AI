@@ -7,6 +7,8 @@ from PIL import Image
 import timm
 import io
 import json
+import requests
+from io import BytesIO
 
 # Device configuration
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -231,6 +233,22 @@ def load_model(model_name):
         print(f"❌ Error loading {model_name} model: {str(e)}")
         return None
 
+def download_image_from_url(url):
+    """Download image from URL with browser headers to avoid blocking"""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        # Convert bytes to PIL Image
+        img = Image.open(BytesIO(response.content)).convert('RGB')
+        return img
+    except Exception as e:
+        print(f"⚠️ Failed to download image from URL: {str(e)}")
+        return None
+
 def predict_image(image, model_name, top_n):
     """Predict using uploaded image"""
     if image is None:
@@ -249,13 +267,20 @@ def predict_image(image, model_name, top_n):
         # Preprocess image - handle different input types
         try:
             if isinstance(image, str):
-                # If path string, open it with validation
-                try:
-                    pil_image = Image.open(image)
-                    pil_image.verify()  # Verify it's a valid image
-                    pil_image = Image.open(image).convert('RGB')  # Reopen after verify
-                except Exception as e:
-                    return f"❌ **Error:** Invalid or corrupted image file: {str(e)}"
+                # Check if it's a URL
+                if image.startswith(('http://', 'https://')):
+                    # Download from URL
+                    pil_image = download_image_from_url(image)
+                    if pil_image is None:
+                        return f"❌ **Error:** Cannot download image from URL. Please check the link or try uploading the file directly."
+                else:
+                    # Local file path - open with validation
+                    try:
+                        pil_image = Image.open(image)
+                        pil_image.verify()  # Verify it's a valid image
+                        pil_image = Image.open(image).convert('RGB')  # Reopen after verify
+                    except Exception as e:
+                        return f"❌ **Error:** Invalid or corrupted image file: {str(e)}"
             elif isinstance(image, Image.Image):
                 # Already PIL Image
                 pil_image = image.convert('RGB')
