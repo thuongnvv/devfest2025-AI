@@ -249,6 +249,60 @@ def download_image_from_url(url):
         print(f"⚠️ Failed to download image from URL: {str(e)}")
         return None
 
+def predict_image_from_pil(pil_image, model_name, top_n):
+    """Predict from PIL Image directly"""
+    try:
+        # Load model
+        model = load_model(model_name)
+        if model is None:
+            return f"❌ **Error:** Failed to load {model_name} model."
+        
+        config = MODEL_CONFIGS[model_name]
+        class_names = config["classes"]
+        
+        # Preprocess and predict
+        image_tensor = transforms_inference(pil_image).unsqueeze(0).to(DEVICE)
+        
+        with torch.no_grad():
+            logits = model(image_tensor)
+            probabilities = torch.softmax(logits, dim=1)[0]
+            max_prob, max_idx = torch.max(probabilities, dim=0)
+            max_confidence = float(max_prob)
+            
+            entropy = -torch.sum(probabilities * torch.log(probabilities + 1e-8))
+            normalized_entropy = float(entropy / torch.log(torch.tensor(len(class_names))))
+            
+            threshold = CONFIDENCE_THRESHOLDS.get(model_name, 0.50)
+            is_out_of_domain = (max_confidence < threshold) or (normalized_entropy > 0.8)
+            
+            if is_out_of_domain:
+                reasons = []
+                if max_confidence < threshold:
+                    reasons.append(f"low confidence ({max_confidence*100:.1f}% < {threshold*100:.0f}%)")
+                if normalized_entropy > 0.8:
+                    reasons.append(f"high uncertainty (entropy: {normalized_entropy:.3f})")
+                
+                output = f"🚫 **Out of Domain**\n\n"
+                output += f"**Reason:** {' and '.join(reasons)}\n"
+                output += f"**Suggestion:** This image may not contain {config['description'].lower()}."
+                return output
+            
+            top_n = min(top_n, len(class_names))
+            topk = torch.topk(probabilities, k=top_n)
+            
+            output = f"✅ **Prediction Successful**\n\n"
+            output += f"**Model:** {config['description']}\n"
+            output += f"**Max Confidence:** {max_confidence*100:.1f}%\n\n"
+            output += "**Top Predictions:**\n"
+            for i, (prob, idx) in enumerate(zip(topk.values, topk.indices)):
+                confidence = float(prob) * 100
+                class_name = class_names[int(idx)]
+                output += f"**{i+1}.** {class_name} - **{confidence:.1f}%**\n"
+            
+            return output
+    except Exception as e:
+        return f"❌ **Error:** {str(e)}"
+
 def predict_image(image, model_name, top_n):
     """Predict using uploaded image"""
     if image is None:
@@ -441,16 +495,40 @@ def create_interface():
         
         # Event Handlers
         def handle_prediction(url_or_file, model, top_n):
-            # Handle both URL string and file dict from Gradio client
+            # Handle different input formats from Gradio client
             if isinstance(url_or_file, dict):
-                # Gradio client sends {'path': 'url'} for URLs
+                # Gradio client sends dict with 'path' key
                 image_source = url_or_file.get('path', '')
+            elif isinstance(url_or_file, str):
+                # Check if string looks like a dict (sometimes serialized)
+                if url_or_file.startswith('{') and 'path' in url_or_file:
+                    # Try to extract path from dict string
+                    try:
+                        import ast
+                        parsed = ast.literal_eval(url_or_file)
+                        image_source = parsed.get('path', url_or_file)
+                    except:
+                        image_source = url_or_file
+                else:
+                    # Direct URL or file path string
+                    image_source = url_or_file
             else:
-                # Direct string or file path
-                image_source = url_or_file
+                image_source = str(url_or_file) if url_or_file else ''
             
             if not image_source:
-                return "❌ **Error:** Please provide an image URL or upload a file."
+                return "❌ **Error:** Please provide an image URL."
+            
+            # If path is local file from Gradio's temp storage, read and convert to URL not supported
+            # For now, only accept URLs starting with http
+            if not image_source.startswith(('http://', 'https://')):
+                # It's a local temp file - need to read it
+                try:
+                    pil_img = Image.open(image_source).convert('RGB')
+                    # Call predict with PIL image directly
+                    return predict_image_from_pil(pil_img, model, top_n)
+                except Exception as e:
+                    return f"❌ **Error:** Cannot read temp file: {str(e)}"
+            
             return predict_image(image_source, model, top_n)
         
         predict_btn.click(
