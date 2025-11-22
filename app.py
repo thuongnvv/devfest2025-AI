@@ -249,14 +249,22 @@ def predict_image(image, model_name, top_n):
         # Preprocess image - handle different input types
         try:
             if isinstance(image, str):
-                # If path string, open it
-                pil_image = Image.open(image).convert('RGB')
+                # If path string, open it with validation
+                try:
+                    pil_image = Image.open(image)
+                    pil_image.verify()  # Verify it's a valid image
+                    pil_image = Image.open(image).convert('RGB')  # Reopen after verify
+                except Exception as e:
+                    return f"❌ **Error:** Invalid or corrupted image file: {str(e)}"
             elif isinstance(image, Image.Image):
                 # Already PIL Image
                 pil_image = image.convert('RGB')
             else:
                 # Try to convert to PIL Image
-                pil_image = Image.fromarray(image).convert('RGB')
+                try:
+                    pil_image = Image.fromarray(image).convert('RGB')
+                except Exception as e:
+                    return f"❌ **Error:** Cannot convert to PIL Image: {str(e)}"
         except Exception as img_err:
             return f"❌ **Error:** Failed to process image: {str(img_err)}"
             
