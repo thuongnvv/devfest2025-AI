@@ -59,17 +59,18 @@ MODEL_CONFIGS = {
         ]
     },
     "nail": {
-        "path": "best_nail_model.pth", 
-        "description": "Nail disease detection using MobileNetV2",
-        "architecture": "MobileNetV2",
-        "type": "mobilenet",
+        "path": "resnet18_cbam_nail_best.pth", 
+        "description": "Nail disease detection using ResNet18 + CBAM",
+        "architecture": "ResNet18 + CBAM Attention",
+        "type": "cbam_resnet18",
         "classes": [
             "Acral_Lentiginous_Melanoma",
             "Healthy_Nail",
             "Onychogryphosis",
             "blue_finger",
             "clubbing",
-            "pitting"
+            "pitting",
+            "Unknown"
         ]
     }
 }
@@ -163,6 +164,95 @@ class ResNet18_ViTS_CBAM(nn.Module):
         out = self.classifier(feat)
         return out
 
+# CBAMResNet18 for Nail Model (from nail training notebook)
+class ChannelAttention(nn.Module):
+    def __init__(self, in_planes, ratio=16):
+        super(ChannelAttention, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.max_pool = nn.AdaptiveMaxPool2d(1)
+        
+        # Safe ratio for small channels
+        safe_ratio = ratio if in_planes >= ratio else 1
+        
+        self.fc1 = nn.Conv2d(in_planes, in_planes // safe_ratio, 1, bias=False)
+        self.relu1 = nn.ReLU()
+        self.fc2 = nn.Conv2d(in_planes // safe_ratio, in_planes, 1, bias=False)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        avg_out = self.fc2(self.relu1(self.fc1(self.avg_pool(x))))
+        max_out = self.fc2(self.relu1(self.fc1(self.max_pool(x))))
+        return self.sigmoid(avg_out + max_out)
+
+class SpatialAttention(nn.Module):
+    def __init__(self, kernel_size=7):
+        super(SpatialAttention, self).__init__()
+        self.conv1 = nn.Conv2d(2, 1, kernel_size, padding=kernel_size//2, bias=False)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        avg_out = torch.mean(x, dim=1, keepdim=True)
+        max_out, _ = torch.max(x, dim=1, keepdim=True)
+        x = torch.cat([avg_out, max_out], dim=1)
+        return self.sigmoid(self.conv1(x))
+
+class CBAMModule(nn.Module):
+    def __init__(self, in_planes, ratio=16, kernel_size=7):
+        super(CBAMModule, self).__init__()
+        self.ca = ChannelAttention(in_planes, ratio)
+        self.sa = SpatialAttention(kernel_size)
+
+    def forward(self, x):
+        out = x * self.ca(x)
+        out = out * self.sa(out)
+        return out
+
+class CBAMResNet18(nn.Module):
+    def __init__(self, num_classes):
+        super(CBAMResNet18, self).__init__()
+        # Load ResNet18 pretrained
+        from torchvision.models import resnet18, ResNet18_Weights
+        self.backbone = resnet18(weights=ResNet18_Weights.DEFAULT)
+        
+        # ResNet18 channel configs: 64, 128, 256, 512
+        self.cbam1 = CBAMModule(64)
+        self.cbam2 = CBAMModule(128)
+        self.cbam3 = CBAMModule(256)
+        self.cbam4 = CBAMModule(512)
+        
+        # Classifier
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(512, num_classes)
+
+    def forward(self, x):
+        # Stem
+        x = self.backbone.conv1(x)
+        x = self.backbone.bn1(x)
+        x = self.backbone.relu(x)
+        x = self.backbone.maxpool(x)
+
+        # Layer 1 + CBAM
+        x = self.backbone.layer1(x)
+        x = self.cbam1(x)
+
+        # Layer 2 + CBAM
+        x = self.backbone.layer2(x)
+        x = self.cbam2(x)
+
+        # Layer 3 + CBAM
+        x = self.backbone.layer3(x)
+        x = self.cbam3(x)
+
+        # Layer 4 + CBAM
+        x = self.backbone.layer4(x)
+        x = self.cbam4(x)
+
+        # Head
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.fc(x)
+        return x
+
 def load_model(model_name):
     """Load a specific model"""
     if model_name in loaded_models:
@@ -198,8 +288,12 @@ def load_model(model_name):
         if config["type"] == "fusion_model":
             # DermNet model - exact architecture
             model = ResNet18_ViTS_CBAM(num_classes=len(config["classes"]))
+        elif config["type"] == "cbam_resnet18":
+            # Nail model - CBAMResNet18 architecture
+            model = CBAMResNet18(num_classes=len(config["classes"]))
+            print(f"🔧 Created CBAMResNet18 for {model_name} with {len(config['classes'])} classes")
         else:
-            # MobileNetV2 for teeth and nail models
+            # MobileNetV2 for teeth model
             from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
             model = mobilenet_v2(weights=MobileNet_V2_Weights.DEFAULT)
             model.classifier[1] = nn.Linear(model.last_channel, len(config["classes"]))
