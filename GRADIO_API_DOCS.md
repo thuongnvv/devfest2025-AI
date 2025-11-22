@@ -2,23 +2,62 @@
 
 🩺 Multi-model medical AI on HuggingFace Spaces using Gradio Client
 
+**⚠️ BREAKING CHANGE (v2.0):** API now returns JSON instead of Markdown for easier parsing.
+
 ## 🚀 Quick Start
 
 ```python
 from gradio_client import Client
+import json
 
 # Connect to Space
 client = Client("thuonguyenvan/medagenn")
 
-# Make prediction
-result = client.predict(
+# Make prediction (returns JSON string)
+result_json = client.predict(
     "https://example.com/image.jpg",  # image URL
     "dermnet",                          # model: dermnet/teeth/nail
     3,                                  # top N predictions
     api_name="/handle_prediction"
 )
 
-print(result)
+# Parse JSON
+result = json.loads(result_json)
+print(f"Success: {result['success']}")
+print(f"Top prediction: {result['predictions'][0]['class']}")
+print(f"Confidence: {result['predictions'][0]['confidence']*100:.1f}%")
+```
+
+## 📋 Response Format
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "model": "dermnet",
+  "architecture": "ResNet18 + ViT + CBAM",
+  "description": "Skin disease detection using ResNet18 + ViT + CBAM",
+  "predictions": [
+    {
+      "class": "Acne and Rosacea Photos",
+      "confidence": 0.524
+    },
+    {
+      "class": "Atopic Dermatitis Photos",
+      "confidence": 0.160
+    }
+  ]
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": "Failed to download image from URL"
+}
 ```
 
 ## 📡 API Endpoints
@@ -30,24 +69,54 @@ print(result)
 - `select_ai_model` (str): Model name - `"dermnet"` | `"teeth"` | `"nail"`
 - `number_of_predictions` (int): Number of top predictions (1-5)
 
-**Returns**: Markdown-formatted string with predictions
+**Returns**: JSON string with prediction results
+
+**Example**:
+```python
+result_json = client.predict(
+    "https://example.com/image.jpg",
+    "dermnet",
+    3,
+    api_name="/handle_prediction"
+)
+
+# Parse JSON
+import json
+result = json.loads(result_json)
+if result['success']:
+    for pred in result['predictions']:
+        print(f"{pred['class']}: {pred['confidence']*100:.1f}%")
+```
 
 ### 2. Get Model Info (`/get_model_info`)
 
 **Parameters**:
 - `select_ai_model` (str): Model name
 
-**Returns**: Model architecture and configuration info
+**Returns**: Markdown-formatted model information
+
+### 3. List Models (`/list_models`)
+
+**Returns**: Markdown-formatted list of all available models
+
+### 4. Get Classes (`/get_classes`)
+
+**Parameters**:
+- `select_ai_model` (str): Model name
+
+**Returns**: Markdown-formatted list of classes for the specified model
 
 ## 🏥 Available Models
 
 | Model | Domain | Architecture | Classes | File Size |
 |-------|--------|--------------|---------|-----------|
-| `dermnet` | Skin diseases | ResNet18 + ViT + CBAM | 14 | 128MB |
+| `dermnet` | Skin diseases | Swin Tiny + ConvNeXt + CBAM | 23 | 216MB |
 | `teeth` | Dental conditions | ResNet18 + CBAM | 6 (incl. Unknown) | 45MB |
 | `nail` | Nail disorders | ResNet18 + CBAM | 7 (incl. Unknown) | 45MB |
 
-**Note**: All models now use advanced architectures with CBAM attention mechanism. Teeth and nail models include Unknown class for out-of-domain detection.
+**Model Details:**
+- **DermNet**: Advanced hybrid model combining Vision Transformer (Swin) and CNN (ConvNeXt) with gated fusion and CBAM attention. Covers 23 comprehensive skin disease categories.
+- **Teeth & Nail**: Efficient ResNet18-based models with CBAM attention, including Unknown class for out-of-domain detection.
 
 ## 💻 Code Examples
 
@@ -55,46 +124,67 @@ print(result)
 
 ```python
 from gradio_client import Client
+import json
 
 # Initialize client
 client = Client("thuonguyenvan/medagenn")
 
 # Test image URL
-url = "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3a/Cat03.jpg/480px-Cat03.jpg"
+url = "https://example.com/skin_lesion.jpg"
 
-# Get predictions for all models
-for model in ["dermnet", "teeth", "nail"]:
-    result = client.predict(url, model, 3, api_name="/handle_prediction")
-    print(f"\n{model.upper()} Results:\n{result}")
+# Get predictions
+result_json = client.predict(url, "dermnet", 3, api_name="/handle_prediction")
+
+# Parse JSON
+result = json.loads(result_json)
+if result['success']:
+    print(f"Model: {result['model']}")
+    print(f"Architecture: {result['architecture']}")
+    print("\nPredictions:")
+    for i, pred in enumerate(result['predictions'], 1):
+        print(f"{i}. {pred['class']}: {pred['confidence']*100:.1f}%")
+else:
+    print(f"Error: {result['error']}")
 ```
 
 ### With Error Handling
 
 ```python
 from gradio_client import Client
+import json
 
 def predict_image(image_url, model="dermnet", top_n=3):
     try:
         client = Client("thuonguyenvan/medagenn")
-        result = client.predict(
+        result_json = client.predict(
             image_url,
             model,
             top_n,
             api_name="/handle_prediction"
         )
-        return result
+        result = json.loads(result_json)
+        
+        if result['success']:
+            return result['predictions']
+        else:
+            print(f"API Error: {result['error']}")
+            return None
     except Exception as e:
-        return f"Error: {str(e)}"
+        print(f"Connection Error: {str(e)}")
+        return None
 
 # Use it
-result = predict_image("https://example.com/skin_lesion.jpg", "dermnet")
-print(result)
+predictions = predict_image("https://example.com/skin_lesion.jpg", "dermnet")
+if predictions:
+    for pred in predictions:
+        print(f"{pred['class']}: {pred['confidence']*100:.1f}%")
 ```
 
 ### Batch Processing
 
 ```python
 from gradio_client import Client
+import json
 
 client = Client("thuonguyenvan/medagenn")
 
@@ -108,25 +198,34 @@ image_urls = [
 # Process all
 results = []
 for url in image_urls:
-    result = client.predict(url, "dermnet", 3, api_name="/handle_prediction")
+    result_json = client.predict(url, "dermnet", 3, api_name="/handle_prediction")
+    result = json.loads(result_json)
     results.append(result)
 
 # Display
 for i, result in enumerate(results):
-    print(f"\nImage {i+1}:\n{result}")
+    print(f"\n=== Image {i+1} ===")
+    if result['success']:
+        for pred in result['predictions']:
+            print(f"  {pred['class']}: {pred['confidence']*100:.1f}%")
+    else:
+        print(f"  Error: {result['error']}")
 ```
 
-### Get Model Information
+### Get All Models
 
 ```python
 from gradio_client import Client
 
 client = Client("thuonguyenvan/medagenn")
 
-# Get info for each model
-for model in ["dermnet", "teeth", "nail"]:
-    info = client.predict(model, api_name="/get_model_info")
-    print(f"\n{model.upper()} Info:\n{info}")
+# List all models
+models_info = client.predict(api_name="/list_models")
+print(models_info)
+
+# Get classes for specific model
+classes = client.predict("dermnet", api_name="/get_classes")
+print(classes)
 ```
 
 ## 📋 View Available APIs
