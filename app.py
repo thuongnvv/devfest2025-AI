@@ -46,16 +46,17 @@ MODEL_CONFIGS = {
         ]
     },
     "teeth": {
-        "path": "best_teeth_model.pth",
-        "description": "Teeth disease detection using MobileNetV2",
-        "architecture": "MobileNetV2",
-        "type": "mobilenet",
+        "path": "resnet18_cbam_teeth_best.pth",
+        "description": "Teeth disease detection using ResNet18 + CBAM",
+        "architecture": "ResNet18 + CBAM Attention",
+        "type": "cbam_resnet18",
         "classes": [
             "Calculus",
             "Mouth Ulcer",
             "Tooth Discoloration", 
             "caries",
-            "hypodontia"
+            "hypodontia",
+            "Unknown"
         ]
     },
     "nail": {
@@ -289,15 +290,9 @@ def load_model(model_name):
             # DermNet model - exact architecture
             model = ResNet18_ViTS_CBAM(num_classes=len(config["classes"]))
         elif config["type"] == "cbam_resnet18":
-            # Nail model - CBAMResNet18 architecture
+            # Nail and Teeth models - CBAMResNet18 architecture
             model = CBAMResNet18(num_classes=len(config["classes"]))
             print(f"🔧 Created CBAMResNet18 for {model_name} with {len(config['classes'])} classes")
-        else:
-            # MobileNetV2 for teeth model
-            from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
-            model = mobilenet_v2(weights=MobileNet_V2_Weights.DEFAULT)
-            model.classifier[1] = nn.Linear(model.last_channel, len(config["classes"]))
-            print(f"🔧 Created MobileNetV2 for {model_name}")
         
         # Try to load state dict with different strategies
         try:
