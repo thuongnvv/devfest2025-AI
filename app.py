@@ -681,18 +681,6 @@ def create_interface():
                 )
                 get_classes_btn = gr.Button("🏷️ Get Classes", variant="primary")
                 classes_output = gr.Markdown()
-            
-            # Tab 4: JSON API (Hidden - for API access only)
-            with gr.Tab("🔌 JSON API", visible=False):
-                api_url_input = gr.Textbox(label="Image URL")
-                api_model_dropdown = gr.Dropdown(
-                    choices=list(MODEL_CONFIGS.keys()),
-                    value="dermnet",
-                    label="Model"
-                )
-                api_top_n = gr.Slider(1, 5, 3, step=1, label="Top N")
-                api_predict_btn = gr.Button("Predict (JSON)")
-                api_json_output = gr.Textbox(label="JSON Result")
         
         # Footer
         gr.Markdown("""
@@ -808,18 +796,22 @@ def create_interface():
             return output
         
         # Connect event handlers
-        # UI button uses Markdown formatting (via handle_prediction_ui wrapper)
+        # UI button - shows Markdown
         predict_btn.click(
             fn=handle_prediction_ui,
             inputs=[image_input, model_dropdown, top_n_slider],
             outputs=prediction_output
         )
         
-        # JSON API endpoint (returns raw JSON)
-        api_predict_btn.click(
+        # API endpoint - returns JSON
+        # Create hidden textbox just for API registration
+        hidden_json_output = gr.Textbox(visible=False, label="json_output")
+        hidden_trigger = gr.Textbox(visible=False, label="hidden")
+        
+        hidden_trigger.submit(
             fn=handle_prediction,
-            inputs=[api_url_input, api_model_dropdown, api_top_n],
-            outputs=api_json_output,
+            inputs=[image_input, model_dropdown, top_n_slider],
+            outputs=hidden_json_output,
             api_name="handle_prediction"
         )
         
