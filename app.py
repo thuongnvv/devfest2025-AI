@@ -441,46 +441,64 @@ def create_interface():
         ⚠️ **Medical Disclaimer:** This AI system is for educational and research purposes only. Always consult qualified healthcare professionals for medical advice.
         """)
         
-        with gr.Row():
-            # Left Column - Input
-            with gr.Column(scale=1):
-                gr.Markdown("### 📤 Upload & Configure")
-                
-                image_input = gr.Textbox(
-                    label="Image URL",
-                    placeholder="Enter image URL (e.g., https://example.com/image.jpg)",
-                    lines=1
-                )
-                
-                model_dropdown = gr.Dropdown(
+        with gr.Tabs():
+            # Tab 1: Main Prediction Interface
+            with gr.Tab("🔬 Prediction"):
+                with gr.Row():
+                    # Left Column - Input
+                    with gr.Column(scale=1):
+                        gr.Markdown("### 📤 Upload & Configure")
+                        
+                        image_input = gr.Textbox(
+                            label="Image URL",
+                            placeholder="Enter image URL (e.g., https://example.com/image.jpg)",
+                            lines=1
+                        )
+                        
+                        model_dropdown = gr.Dropdown(
+                            choices=list(MODEL_CONFIGS.keys()),
+                            value="dermnet",
+                            label="Select AI Model",
+                            info="Choose the appropriate model for your image type"
+                        )
+                        
+                        top_n_slider = gr.Slider(
+                            minimum=1,
+                            maximum=5,
+                            value=3,
+                            step=1,
+                            label="Number of Predictions",
+                            info="How many top predictions to show"
+                        )
+                        
+                        predict_btn = gr.Button("🔬 Analyze Image", variant="primary")
+                        
+                    # Right Column - Output  
+                    with gr.Column(scale=1):
+                        gr.Markdown("### 📊 AI Analysis Results")
+                        
+                        prediction_output = gr.Markdown(
+                            value="Upload an image and click 'Analyze Image' to see predictions..."
+                        )
+                        
+                        model_info_output = gr.Markdown(
+                            value=get_model_info("dermnet")
+                        )
+            
+            # Tab 2: List Models API
+            with gr.Tab("📋 Models List"):
+                list_models_btn = gr.Button("📋 Get All Models", variant="primary")
+                models_list_output = gr.Markdown()
+            
+            # Tab 3: Get Classes API
+            with gr.Tab("🏷️ Model Classes"):
+                classes_model_dropdown = gr.Dropdown(
                     choices=list(MODEL_CONFIGS.keys()),
                     value="dermnet",
-                    label="Select AI Model",
-                    info="Choose the appropriate model for your image type"
+                    label="Select Model"
                 )
-                
-                top_n_slider = gr.Slider(
-                    minimum=1,
-                    maximum=5,
-                    value=3,
-                    step=1,
-                    label="Number of Predictions",
-                    info="How many top predictions to show"
-                )
-                
-                predict_btn = gr.Button("🔬 Analyze Image", variant="primary")
-                
-            # Right Column - Output  
-            with gr.Column(scale=1):
-                gr.Markdown("### 📊 AI Analysis Results")
-                
-                prediction_output = gr.Markdown(
-                    value="Upload an image and click 'Analyze Image' to see predictions..."
-                )
-                
-                model_info_output = gr.Markdown(
-                    value=get_model_info("dermnet")
-                )
+                get_classes_btn = gr.Button("🏷️ Get Classes", variant="primary")
+                classes_output = gr.Markdown()
         
         # Footer
         gr.Markdown("""
@@ -534,16 +552,61 @@ def create_interface():
             # Predict using the PIL image
             return predict_image_from_pil(pil_image, model, top_n)
         
+        def list_models():
+            """List all available models with their info"""
+            output = "# 🏥 Available AI Models\n\n"
+            output += f"**Total Models:** {len(MODEL_CONFIGS)}\n\n"
+            
+            for model_name, config in MODEL_CONFIGS.items():
+                output += f"## 🔬 {model_name.upper()}\n"
+                output += f"- **Description:** {config['description']}\n"
+                output += f"- **Architecture:** {config['architecture']}\n"
+                output += f"- **Classes:** {len(config['classes'])}\n"
+                output += f"- **Confidence Threshold:** {CONFIDENCE_THRESHOLDS[model_name]*100}%\n\n"
+            
+            return output
+        
+        def get_classes(model):
+            """Get list of classes for a specific model"""
+            if model not in MODEL_CONFIGS:
+                return "❌ **Error:** Invalid model name"
+            
+            classes = MODEL_CONFIGS[model]["classes"]
+            output = f"# 📋 {model.upper()} Classes\n\n"
+            output += f"**Total Classes:** {len(classes)}\n\n"
+            
+            for i, cls in enumerate(classes, 1):
+                output += f"{i}. {cls}\n"
+            
+            return output
+        
+        # Connect event handlers
         predict_btn.click(
             fn=handle_prediction,
             inputs=[image_input, model_dropdown, top_n_slider],
-            outputs=prediction_output
+            outputs=prediction_output,
+            api_name="handle_prediction"
         )
         
         model_dropdown.change(
             fn=get_model_info,
             inputs=model_dropdown,
-            outputs=model_info_output
+            outputs=model_info_output,
+            api_name="get_model_info"
+        )
+        
+        list_models_btn.click(
+            fn=list_models,
+            inputs=[],
+            outputs=models_list_output,
+            api_name="list_models"
+        )
+        
+        get_classes_btn.click(
+            fn=get_classes,
+            inputs=[classes_model_dropdown],
+            outputs=classes_output,
+            api_name="get_classes"
         )
     
     return demo
