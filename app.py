@@ -494,42 +494,46 @@ def create_interface():
         """)
         
         # Event Handlers
-        def handle_prediction(url_or_file, model, top_n):
-            # Handle different input formats from Gradio client
-            if isinstance(url_or_file, dict):
-                # Gradio client sends dict with 'path' key
-                image_source = url_or_file.get('path', '')
-            elif isinstance(url_or_file, str):
-                # Check if string looks like a dict (sometimes serialized)
-                if url_or_file.startswith('{') and 'path' in url_or_file:
-                    # Try to extract path from dict string
+        def handle_prediction(url_input, model, top_n):
+            """Handle prediction from URL input - force URL only, no temp files"""
+            
+            # Clean up input - handle various formats
+            url = None
+            
+            if isinstance(url_input, dict):
+                # Dict from Gradio client
+                url = url_input.get('path', '') or url_input.get('url', '')
+            elif isinstance(url_input, str):
+                # Check if stringified dict
+                if url_input.startswith('{') and ('path' in url_input or 'url' in url_input):
                     try:
                         import ast
-                        parsed = ast.literal_eval(url_or_file)
-                        image_source = parsed.get('path', url_or_file)
+                        parsed = ast.literal_eval(url_input)
+                        # Try to extract URL from dict, not temp path
+                        url = parsed.get('url') or parsed.get('path', '')
                     except:
-                        image_source = url_or_file
+                        url = url_input
                 else:
-                    # Direct URL or file path string
-                    image_source = url_or_file
+                    url = url_input.strip()
             else:
-                image_source = str(url_or_file) if url_or_file else ''
+                url = str(url_input) if url_input else ''
             
-            if not image_source:
-                return "❌ **Error:** Please provide an image URL."
+            if not url:
+                return "❌ **Error:** Please enter an image URL."
             
-            # If path is local file from Gradio's temp storage, read and convert to URL not supported
-            # For now, only accept URLs starting with http
-            if not image_source.startswith(('http://', 'https://')):
-                # It's a local temp file - need to read it
-                try:
-                    pil_img = Image.open(image_source).convert('RGB')
-                    # Call predict with PIL image directly
-                    return predict_image_from_pil(pil_img, model, top_n)
-                except Exception as e:
-                    return f"❌ **Error:** Cannot read temp file: {str(e)}"
+            # CRITICAL: Only accept HTTP/HTTPS URLs - ignore temp file paths
+            if not url.startswith(('http://', 'https://')):
+                return "❌ **Error:** Please enter a valid HTTP/HTTPS image URL (e.g., https://example.com/image.jpg)"
             
-            return predict_image(image_source, model, top_n)
+            # Download image ourselves with proper User-Agent
+            print(f"🌐 Downloading image from: {url}")
+            pil_image = download_image_from_url(url)
+            
+            if pil_image is None:
+                return f"❌ **Error:** Failed to download image from URL. Please check:\n- URL is accessible\n- URL points to an image file\n- Website allows downloads"
+            
+            # Predict using the downloaded PIL image
+            return predict_image_from_pil(pil_image, model, top_n)
         
         predict_btn.click(
             fn=handle_prediction,
